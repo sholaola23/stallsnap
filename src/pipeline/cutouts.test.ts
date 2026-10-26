@@ -81,9 +81,9 @@ describe("findProducts", () => {
       ["Rice bag", "box", RICE.left, RICE.top],
     ]);
 
-    // 1 propose + SAM for person and 5 phrases + 1 review + 1 missed + 1 SAM boxes
-    expect(meta.calls).toHaveLength(10);
-    expect(guard.callsForJob("job1")).toBe(10);
+    // 1 propose + SAM for person and 5 phrases + 1 review + 1 missed + 1 SAM boxes + 1 review of the box mask
+    expect(meta.calls).toHaveLength(11);
+    expect(guard.callsForJob("job1")).toBe(11);
     expect(guard.spentToday()).toBeGreaterThan(0);
   });
 
@@ -98,8 +98,9 @@ describe("findProducts", () => {
     });
     const client = new MetaClient({ apiKey: "k", guard, fetch: meta.fetch });
     const cutouts = await findProducts(client, "job1", photo);
-    // Reviewed: tomato, milk, and the stray "tin" crop. Not the bag on the person.
-    expect(reviewed).toHaveLength(3);
+    // Reviewed: tomato, milk and the stray "tin" crop, then the missed rice from its box. Not the bag on the person.
+    expect(reviewed).toHaveLength(4);
+    expect(reviewed.some((t) => t.includes("Rice bag"))).toBe(true);
     expect(cutouts.some((c) => c.mask.left === BAG_ON_PERSON.left && c.mask.top === BAG_ON_PERSON.top)).toBe(false);
   });
 

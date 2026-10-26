@@ -3,12 +3,18 @@
 //
 // Muse Image has no setting that keeps pixels unchanged (mask, input_fidelity
 // and seed are rejected, https://dev.meta.ai/docs/image-generation), and Meta
-// warns it may "clean up" real wear. So the prompt names what must stay, and
-// the result is checked against the trader's own cut-out before it is used:
-// - inside the product, colours must stay close to the original;
-// - outside it, the background must stay plain, so nothing was added.
-// If either check fails, or the call fails or is refused, the plain cut-out
-// is used. Muse Image never makes a product the trader doesn't sell.
+// warns it may "clean up" real wear. So the prompt names what must stay, the
+// result is checked against the trader's own cut-out, and then the trader's
+// own product pixels are pasted back over it. Muse only ever supplies the
+// background and light around the product, never the product itself.
+// The checks, before the paste:
+// - inside the product, colours must stay close to the original, so Muse
+//   didn't move or replace it (a moved product would leave a ghost behind);
+// - outside it, the background must be plain and light, and no patch of it
+//   may stand out, so nothing was added next to the product;
+// - the result must be the same shape and at least half the size.
+// If any check fails, or the call fails, times out or is refused, the plain
+// cut-out is used. Muse Image never makes a product the trader doesn't sell.
 import { readFileSync, writeFileSync } from "node:fs";
 import sharp from "sharp";
 import type { JobLog } from "../joblog.ts";
@@ -17,6 +23,9 @@ import { IMAGE_MODEL, PRICES } from "../meta/costs.ts";
 
 export const MAX_PRODUCT_DRIFT = 28; // mean absolute difference per channel, 0 to 255
 export const MAX_BACKGROUND_SPREAD = 18; // standard deviation of background brightness
+export const MIN_BACKGROUND_BRIGHTNESS = 200; // a plain light background, not a coloured one
+export const MAX_STRAY_SHARE = 0.005; // share of background pixels that stand out from it
+const STRAY_DIFF = 25; // brightness difference from the background's median that counts as standing out
 const CHECK_SIDE = 96;
 const INPUT_BACKDROP = { r: 236, g: 236, b: 236 };
 
@@ -32,6 +41,8 @@ export type CleanupResult =
   | { png: Uint8Array; cleaned: true; drift: number; spread: number }
   | { png: Uint8Array; cleaned: false; reason: string; drift?: number; spread?: number };
 
+export type Comparison = { drift: number; spread: number; brightness: number; stray: number };
+
 type Raster = { data: Buffer; width: number; height: number };
 
 async function rgbaAt(image: Uint8Array, width: number, height: number): Promise<Raster> {
@@ -40,7 +51,7 @@ async function rgbaAt(image: Uint8Array, width: number, height: number): Promise
 }
 
 /** Compares a cleaned image with the cut-out it came from. */
-export async function compare(cutout: Uint8Array, cleaned: Uint8Array): Promise<{ drift: number; spread: number }> {
+export async function compare(cutout: Uint8Array, cleaned: Uint8Array): Promise<Comparison> {
   const meta = await sharp(cutout).metadata();
   const scale = CHECK_SIDE / Math.max(meta.width!, meta.height!);
   const w = Math.max(8, Math.round(meta.width! * scale));
@@ -66,7 +77,10 @@ export async function compare(cutout: Uint8Array, cleaned: Uint8Array): Promise<
   const drift = inside === 0 ? Number.POSITIVE_INFINITY : diff / (inside * 3);
   const mean = outside.reduce((s, v) => s + v, 0) / Math.max(1, outside.length);
   const spread = Math.sqrt(outside.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(1, outside.length));
-  return { drift, spread };
+  // One small added object barely moves the spread, so also count pixels that stand out from the median.
+  const median = [...outside].sort((x, y) => x - y)[Math.floor(outside.length / 2)] ?? 0;
+  const stray = outside.filter((v) => Math.abs(v - median) > STRAY_DIFF).length / Math.max(1, outside.length);
+  return { drift, spread, brightness: mean, stray };
 }
 
 function clearOfProduct(r: Raster, x: number, y: number, ring: number): boolean {
@@ -119,11 +133,20 @@ export async function cleanUp(client: MetaClient, jobId: string, cutout: Uint8Ar
     const ratioIn = width / height;
     const ratioOut = outMeta.width! / outMeta.height!;
     if (Math.abs(ratioIn - ratioOut) / ratioIn > 0.05) return plain("returned image has a different shape");
+    if (Math.min(outMeta.width!, outMeta.height!) < Math.min(width, height) / 2) return plain("returned image too small");
 
-    const { drift, spread } = await compare(cutout, out);
+    const { drift, spread, brightness, stray } = await compare(cutout, out);
     if (!(drift <= MAX_PRODUCT_DRIFT)) return plain("product changed too much", { drift, spread });
     if (!(spread <= MAX_BACKGROUND_SPREAD)) return plain("background not plain", { drift, spread });
-    const png = await sharp(out).resize({ width, height, fit: "fill" }).png().toBuffer();
+    if (!(brightness >= MIN_BACKGROUND_BRIGHTNESS)) return plain("background not light", { drift, spread });
+    if (!(stray <= MAX_STRAY_SHARE)) return plain("something added to the background", { drift, spread });
+    // The trader's own product pixels go back on top, so the product itself is never Muse's.
+    const png = await sharp(out)
+      .resize({ width, height, fit: "fill" })
+      .removeAlpha()
+      .composite([{ input: Buffer.from(cutout), left: 0, top: 0 }])
+      .png()
+      .toBuffer();
     return { png: new Uint8Array(png), cleaned: true, drift, spread };
   } catch (e) {
     return plain(`clean-up failed: ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
@@ -144,6 +167,7 @@ export function cleanupStep(log: JobLog, client: MetaClient, jobId: string, onPl
           onPlain(item.item, result.reason);
           return item.file;
         }
+        console.log(`Item ${item.item} of ${jobId}: cleaned (drift ${result.drift.toFixed(1)}, spread ${result.spread.toFixed(1)})`);
         const cleaned = item.file.replace(/\.png$/, "") + ".clean.png";
         writeFileSync(cleaned, result.png);
         return cleaned;

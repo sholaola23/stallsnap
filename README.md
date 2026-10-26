@@ -95,14 +95,19 @@ To check the page: `bun scripts/check-page.ts` publishes a sample (plain coloure
 
 ### Picture clean-up (Muse Image)
 
-When a catalogue is published, `src/pipeline/cleanup.ts` asks Muse Image to give each cut-out a plain white background and even lighting. Muse Image has no setting that keeps pixels unchanged, so the prompt names what must stay (shape, colours, label text, logos, packaging and wear), web search, image search and shell are turned off, and every result is checked against the trader's own cut-out:
+When a catalogue is published, `src/pipeline/cleanup.ts` asks Muse Image to give each cut-out a plain white background and even lighting. Muse Image has no setting that keeps pixels unchanged, so the prompt names what must stay (shape, colours, label text, logos, packaging and wear), and web search, image search and shell are turned off. Every result is checked against the trader's own cut-out:
 
 | Check | Limit | Typical good edit | Typical bad edit |
 |---|---|---|---|
 | Product drift: mean colour change inside the product | 28 of 255 | 2 to 18 (brighter, more contrast, slight blur) | 66 to 106 (greyscale, recoloured) |
 | Background spread: brightness variation outside the product | 18 | 0 to 1 | about 59 (product moved, object added) |
+| Background brightness | at least 200 | about 250 | 135 (a pink background) |
+| Stray background pixels: more than 25 brighter or darker than the background's median | 0.5% of the background | 0% | 1.3% (a small item placed beside the product) |
+| Size | at least half the cut-out's shorter side | the same or larger | a thumbnail |
 
-If a result fails either check, or the call fails or is refused, the plain cut-out is used. Clean-up never stops a catalogue and never adds a product. Each item's clean-up is a job step, so it is paid for once. It costs $0.01 per picture.
+If a result passes, the trader's own cut-out is pasted back on top of it, pixel for pixel. Muse only ever supplies the background and the light around the product, so a changed label, a "cleaned up" scuff or another colour of the same product can never reach the catalogue. If a result fails a check, or the call fails, times out (120 s) or is refused, the plain cut-out is used. Clean-up never stops a catalogue and never adds a product. Each item's clean-up is a job step, so it is paid for once. It costs $0.01 per picture.
+
+The stray-pixel limit was set on synthetic images. Whether a soft studio shadow from the real model stays under it is PENDING the live run.
 
 ### Running the server
 

@@ -49,6 +49,19 @@ export class MetaClient {
     });
   }
 
+  /** POST /images/edits (Muse Image) with a JSON body. */
+  imagesEdit(call: Call, body: Record<string, unknown>, usd: (res: unknown) => number): Promise<unknown> {
+    const json = JSON.stringify(body);
+    return this.#cached(call, `images/edits\n${json}`, usd, async () => {
+      const res = await this.#o.fetch(`${this.#o.baseUrl}/images/edits`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.#o.apiKey}`, "content-type": "application/json" },
+        body: json,
+      });
+      return readJson(res);
+    });
+  }
+
   /** POST /asr/transcribe with a WAV clip. */
   transcribe(call: Call, request: Record<string, unknown>, wav: Uint8Array, usd: (res: unknown) => number): Promise<unknown> {
     const key = `transcribe\n${JSON.stringify(request)}\n${createHash("sha256").update(wav).digest("hex")}`;

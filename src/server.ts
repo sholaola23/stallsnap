@@ -9,6 +9,7 @@ import { serveCatalogue, publishCatalogue } from "./catalogue/publish.ts";
 import { missingEnv, readEnv } from "./env.ts";
 import { JobLog } from "./joblog.ts";
 import { MetaClient } from "./meta/client.ts";
+import { cleanupStep } from "./pipeline/cleanup.ts";
 import { realModels } from "./pipeline/models.ts";
 import { DEFAULT_LEDGER_PATH, SpendGuard } from "./spend-guard.ts";
 import { loadWebhookConfig } from "./whatsapp/config.ts";
@@ -29,12 +30,16 @@ if (baseUrl && !/^https:\/\/[^\s/]+/.test(baseUrl)) throw new Error("PUBLIC_BASE
 
 let handle: Handler;
 if (missing.length === 0) {
+  const metaClient = new MetaClient({ apiKey: readEnv("MODEL_API_KEY")!, guard });
   const conversation = new Conversation({
     store: new SessionStore(`${DATA_DIR}/sessions.json`),
     log,
     messenger: new GraphClient({ token: readEnv("WHATSAPP_ACCESS_TOKEN")!, phoneNumberId: readEnv("WHATSAPP_PHONE_NUMBER_ID")! }),
-    models: realModels(new MetaClient({ apiKey: readEnv("MODEL_API_KEY")!, guard })),
-    publish: (s) => publishCatalogue(s, DATA_DIR, baseUrl!),
+    models: realModels(metaClient),
+    publish: (s) =>
+      publishCatalogue(s, DATA_DIR, baseUrl!, {
+        enhance: cleanupStep(log, metaClient, s.jobId, (item, reason) => console.log(`Item ${item} of ${s.jobId}: plain cut-out (${reason})`)),
+      }),
     dataDir: DATA_DIR,
   });
   handle = (msg) => conversation.handle(msg);

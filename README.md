@@ -88,6 +88,17 @@ When the trader taps Yes, publish, `src/catalogue/publish.ts` writes their confi
 
 To check the page: `bun scripts/check-page.ts` publishes a sample (plain coloured shapes, not real products), takes screenshots at 375 and 1280 px, checks for sideways scroll at 320, 375, 768 and 1280 px, and runs axe. It needs Playwright with Chromium. The latest results are in `docs/qa/catalogue-page/`.
 
+### Picture clean-up (Muse Image)
+
+When a catalogue is published, `src/pipeline/cleanup.ts` asks Muse Image to give each cut-out a plain white background and even lighting. Muse Image has no setting that keeps pixels unchanged, so the prompt names what must stay (shape, colours, label text, logos, packaging and wear), web search, image search and shell are turned off, and every result is checked against the trader's own cut-out:
+
+| Check | Limit | Typical good edit | Typical bad edit |
+|---|---|---|---|
+| Product drift: mean colour change inside the product | 28 of 255 | 2 to 18 (brighter, more contrast, slight blur) | 66 to 106 (greyscale, recoloured) |
+| Background spread: brightness variation outside the product | 18 | 0 to 1 | about 59 (product moved, object added) |
+
+If a result fails either check, or the call fails or is refused, the plain cut-out is used. Clean-up never stops a catalogue and never adds a product. Each item's clean-up is a job step, so it is paid for once. It costs $0.01 per picture.
+
 ### Running the server
 
 `bun src/server.ts` needs `APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` and `ALLOWED_NUMBERS`. To reply to traders it also needs `MODEL_API_KEY`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and `PUBLIC_BASE_URL` (https). Without those it still answers Meta's handshake and serves catalogues, and it logs which settings are missing instead of replying.

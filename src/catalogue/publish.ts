@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
-import type { Session } from "../whatsapp/sessions.ts";
+import type { Item, Session } from "../whatsapp/sessions.ts";
 import { CATALOGUE_TITLE, type Catalogue, renderCatalogue } from "./page.ts";
 
 const SLUG = /^[a-z2-7]{16}$/;
@@ -20,7 +20,14 @@ export const newSlug = () => {
   return [...randomBytes(16)].map((b) => alphabet[b & 31]).join("");
 };
 
-export async function publishCatalogue(s: Session, dataDir: string, baseUrl: string, slug = newSlug()): Promise<string> {
+export type PublishOptions = {
+  slug?: string;
+  /** Optional clean-up of each cut-out (Muse Image). It must return the plain cut-out when it can't clean one. */
+  enhance?: (item: Item, png: Uint8Array) => Promise<Uint8Array>;
+};
+
+export async function publishCatalogue(s: Session, dataDir: string, baseUrl: string, opts: PublishOptions = {}): Promise<string> {
+  const slug = opts.slug ?? newSlug();
   if (s.lines.length === 0) throw new Error("Nothing to publish");
   for (const line of s.lines) if (!s.items.some((i) => i.item === line.item)) throw new Error(`Line ${line.item} has no cut-out`);
   const dir = join(dataDir, "public", slug);
@@ -30,7 +37,9 @@ export async function publishCatalogue(s: Session, dataDir: string, baseUrl: str
   for (const line of s.lines) {
     const item = s.items.find((i) => i.item === line.item)!;
     const image = `item-${line.item}.webp`;
-    const info = await sharp(readFileSync(item.file))
+    const original = new Uint8Array(readFileSync(item.file));
+    const picture = opts.enhance ? await opts.enhance(item, original) : original;
+    const info = await sharp(picture)
       .resize({ width: IMAGE_SIDE, height: IMAGE_SIDE, fit: "inside", withoutEnlargement: true })
       .webp({ quality: 80, alphaQuality: 90 })
       .toFile(join(dir, image));

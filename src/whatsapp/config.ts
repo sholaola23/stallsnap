@@ -17,20 +17,29 @@ export type WebhookConfig = {
  */
 export function parseAllowedNumbers(raw: string): Set<string> {
   const out = new Set<string>();
-  for (const part of raw.split(/[,;\n]/)) {
-    const entry = part.trim();
-    if (entry === "") continue;
-    let n = entry.replace(/[\s\-().]/g, "");
+  // Errors name the entry by position and last 4 digits, so a phone number
+  // never ends up in full in the start-up log.
+  const describe = (n: number, entry: string) => `ALLOWED_NUMBERS entry ${n} (...${entry.replace(/\D/g, "").slice(-4)})`;
+  raw.split(/[,;\n]/).forEach((part, i) => {
+    // Invisible formatting marks (copied from phone contacts) are removed first.
+    const entry = part.replace(/\p{Cf}/gu, "").trim();
+    if (entry === "") return;
+    // "+44 (0)7700 900123": the (0) is the trunk prefix, not part of the number.
+    let n = entry.replace(/\(0\)/g, "").replace(/[\s\-().]/g, "");
     if (n.startsWith("+")) n = n.slice(1);
     else if (n.startsWith("00")) n = n.slice(2);
     else if (n.startsWith("0")) {
-      throw new Error(`ALLOWED_NUMBERS entry ${JSON.stringify(entry)} looks local; use the international format, for example 447700900123`);
+      throw new Error(`${describe(i + 1, entry)} looks local; use the international format, for example 447700900123`);
+    }
+    // UK and Nigerian numbers never keep the trunk 0 after the country code.
+    if (/^(44|234)0/.test(n)) {
+      throw new Error(`${describe(i + 1, entry)} has a 0 after the country code; leave it out`);
     }
     if (!/^[1-9]\d{7,14}$/.test(n)) {
-      throw new Error(`ALLOWED_NUMBERS entry ${JSON.stringify(entry)} is not a phone number`);
+      throw new Error(`${describe(i + 1, entry)} is not a phone number`);
     }
     out.add(n);
-  }
+  });
   return out;
 }
 

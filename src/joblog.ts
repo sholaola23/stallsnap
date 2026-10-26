@@ -28,6 +28,30 @@ type Entry =
   | { t: "done"; jobId: string; key: string; value: unknown }
   | { t: "error"; jobId: string; key: string; message: string };
 
+const str = (v: unknown) => typeof v === "string" && v !== "";
+
+/** Checks a replayed line has the shape this file writes. */
+function isEntry(e: unknown): e is Entry {
+  if (typeof e !== "object" || e === null || Array.isArray(e)) return false;
+  const o = e as Record<string, unknown>;
+  switch (o.t) {
+    case "msg":
+      return str(o.id) && "msg" in o;
+    case "handled":
+      return str(o.id);
+    case "job":
+      return str(o.jobId) && (o.status === "open" || o.status === "done" || o.status === "failed");
+    case "start":
+      return str(o.jobId) && str(o.key);
+    case "done":
+      return str(o.jobId) && str(o.key) && "value" in o;
+    case "error":
+      return str(o.jobId) && str(o.key) && typeof o.message === "string";
+    default:
+      return false;
+  }
+}
+
 type StepState =
   | { state: "started" }
   | { state: "done"; value: unknown }
@@ -119,8 +143,16 @@ export class JobLog {
 
     const prior = this.#steps.get(id);
     if (prior?.state === "done") return Promise.resolve(prior.value as T);
-    if (prior?.state === "error") return Promise.reject(new StepFailed(jobId, key, prior.message));
-    if (prior?.state === "started") return Promise.reject(new StepInterrupted(jobId, key));
+    // A step that failed or was cut off can't be retried, so its job is over.
+    // It is failed here, so no caller can leave it open by forgetting to.
+    if (prior?.state === "error") {
+      this.failJob(jobId, `step ${key} failed: ${prior.message}`);
+      return Promise.reject(new StepFailed(jobId, key, prior.message));
+    }
+    if (prior?.state === "started") {
+      this.failJob(jobId, `step ${key} was interrupted by a restart`);
+      return Promise.reject(new StepInterrupted(jobId, key));
+    }
 
     if (this.#jobs.get(jobId)?.status !== "open") {
       return Promise.reject(new Error(`Job ${jobId} is not open`));
@@ -184,12 +216,13 @@ export class JobLog {
       .split("\n")
       .slice(0, -1)
       .forEach((line, i) => {
-        let entry: Entry;
+        let entry: unknown;
         try {
-          entry = JSON.parse(line) as Entry;
+          entry = JSON.parse(line);
         } catch {
-          throw new Error(`Job log ${this.#path} is damaged at line ${i + 1}; not starting`);
+          entry = undefined;
         }
+        if (!isEntry(entry)) throw new Error(`Job log ${this.#path} is damaged at line ${i + 1}; not starting`);
         this.#apply(entry);
       });
   }

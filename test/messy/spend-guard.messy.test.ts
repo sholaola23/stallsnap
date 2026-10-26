@@ -76,11 +76,11 @@ describe("damaged ledger files stop paid calls", () => {
     ["garbage", "\u0000\u0001"],
     ["array", "[]"],
     ["null", "null"],
-    ["negative spend", JSON.stringify({ day: "2026-10-27", spentUsd: -5, jobCalls: {} })],
-    ["spend as text", JSON.stringify({ day: "2026-10-27", spentUsd: "0", jobCalls: {} })],
-    ["bad day", JSON.stringify({ day: "27/10/2026", spentUsd: 0, jobCalls: {} })],
-    ["fractional count", JSON.stringify({ day: "2026-10-27", spentUsd: 0, jobCalls: { j: 1.5 } })],
-    ["counts as array", JSON.stringify({ day: "2026-10-27", spentUsd: 0, jobCalls: [] })],
+    ["negative spend", JSON.stringify({ day: "2026-10-27", spentMicro: -5, jobCalls: {} })],
+    ["spend as text", JSON.stringify({ day: "2026-10-27", spentMicro: "0", jobCalls: {} })],
+    ["bad day", JSON.stringify({ day: "27/10/2026", spentMicro: 0, jobCalls: {} })],
+    ["fractional count", JSON.stringify({ day: "2026-10-27", spentMicro: 0, jobCalls: { j: 1.5 } })],
+    ["counts as array", JSON.stringify({ day: "2026-10-27", spentMicro: 0, jobCalls: [] })],
   ] as const) {
     test(name, async () => {
       writeFileSync(ledgerPath, body);
@@ -94,4 +94,103 @@ describe("damaged ledger files stop paid calls", () => {
       expect(reason).toBe("ledger-unreadable");
     });
   }
+});
+
+// QA round 1 on PR #2: each repro is kept as a test.
+describe("QA round 1 on PR #2", () => {
+  const counting = (counter: { n: number }, usd: number) => async () => {
+    counter.n++;
+    return { value: 1, usd };
+  };
+  const tryPaid = (g: SpendGuard, jobId: string, maxUsd: number, run: () => Promise<{ value: number; usd: number }>) =>
+    g.paid({ jobId, what: "qa", maxUsd }, run).then(
+      () => true,
+      (e) => (e instanceof SpendRefused ? false : Promise.reject(e)),
+    );
+
+  test("two guards on one ledger share one $2 cap and both jobs' counts survive", async () => {
+    const a = new SpendGuard({ ledgerPath, paidCalls: "on" });
+    const b = new SpendGuard({ ledgerPath, paidCalls: "on" });
+    const calls = { n: 0 };
+    for (let i = 0; i < 4; i++) {
+      await tryPaid(a, "j1", 0.5, counting(calls, 0.5));
+      await tryPaid(b, "j2", 0.5, counting(calls, 0.5));
+    }
+    expect(calls.n).toBe(4);
+    expect(a.spentToday()).toBeCloseTo(2, 10);
+    expect(a.callsForJob("j1") + a.callsForJob("j2")).toBe(4);
+    expect(a.callsForJob("j1")).toBeGreaterThan(0);
+  });
+
+  test("a call held open across UTC midnight can't wipe the new day's total", async () => {
+    let now = new Date("2026-10-26T23:59:00Z");
+    const g = new SpendGuard({ ledgerPath, paidCalls: "on", now: () => now });
+    let release!: () => void;
+    const slow = g.paid({ jobId: "slow", what: "qa", maxUsd: 2 }, () => new Promise<{ value: number; usd: number }>((r) => (release = () => r({ value: 1, usd: 0.01 }))));
+    await Bun.sleep(1);
+    now = new Date("2026-10-27T00:01:00Z");
+    const calls = { n: 0 };
+    for (let i = 0; i < 4; i++) await tryPaid(g, `d${i}`, 0.4, counting(calls, 0.4));
+    release();
+    await slow;
+    for (let i = 0; i < 5; i++) await tryPaid(g, `e${i}`, 0.4, counting(calls, 0.4));
+    // The 27th: 4 x 0.40 + the late 0.01, then at most one more 0.40 fits under $2.
+    expect(calls.n).toBeLessThanOrEqual(5);
+    expect(g.spentToday()).toBeLessThanOrEqual(2);
+  });
+
+  test("the clock stepping back across midnight doesn't reset the cap", async () => {
+    let now = new Date("2026-10-26T23:59:59Z");
+    const g = new SpendGuard({ ledgerPath, paidCalls: "on", now: () => now });
+    const calls = { n: 0 };
+    const spend = async () => {
+      for (let i = 0; i < 2; i++) await tryPaid(g, `c${calls.n}-${i}-${now.getTime()}`, 1, counting(calls, 1));
+    };
+    await spend();
+    now = new Date("2026-10-27T00:00:01Z");
+    await spend();
+    now = new Date("2026-10-26T23:59:59Z");
+    await spend();
+    now = new Date("2026-10-27T00:00:02Z");
+    await spend();
+    expect(calls.n).toBeLessThanOrEqual(4);
+  });
+
+  for (const id of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    test(`job id ${JSON.stringify(id)} gets exactly ${60} calls, and a restart still works`, async () => {
+      const g = new SpendGuard({ ledgerPath, paidCalls: "on" });
+      const calls = { n: 0 };
+      for (let i = 0; i < 70; i++) await tryPaid(g, id, 0.0001, counting(calls, 0));
+      expect(calls.n).toBe(60);
+      const again = new SpendGuard({ ledgerPath, paidCalls: "on" });
+      expect(again.callsForJob(id)).toBe(60);
+      expect(await tryPaid(again, "other", 0.0001, counting(calls, 0))).toBe(true);
+    });
+  }
+
+  test("exactly $2 is reachable in 20 x $0.10 (no float drift)", async () => {
+    const g = new SpendGuard({ ledgerPath, paidCalls: "on" });
+    const calls = { n: 0 };
+    for (let i = 0; i < 21; i++) await tryPaid(g, `t${i}`, 0.1, counting(calls, 0.1));
+    expect(calls.n).toBe(20);
+  });
+
+  test("a hanging call keeps its reservation", async () => {
+    const g = new SpendGuard({ ledgerPath, paidCalls: "on" });
+    void g.paid({ jobId: "hang", what: "qa", maxUsd: 1.5 }, () => new Promise<{ value: number; usd: number }>(() => {}));
+    await Bun.sleep(1);
+    expect(await tryPaid(g, "next", 0.6, counting({ n: 0 }, 0.6))).toBe(false);
+  });
+
+  test("the paidCalls option can't switch calls on against STALLSNAP_PAID_CALLS=off", async () => {
+    const before = process.env.STALLSNAP_PAID_CALLS;
+    process.env.STALLSNAP_PAID_CALLS = "off";
+    try {
+      const g = new SpendGuard({ ledgerPath, paidCalls: "on" });
+      expect(await tryPaid(g, "j", 0.01, counting({ n: 0 }, 0))).toBe(false);
+    } finally {
+      if (before === undefined) delete process.env.STALLSNAP_PAID_CALLS;
+      else process.env.STALLSNAP_PAID_CALLS = before;
+    }
+  });
 });

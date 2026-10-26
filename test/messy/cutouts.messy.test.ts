@@ -276,8 +276,13 @@ describe("QA round 1 on PR #5", () => {
   });
 
   test("a photo over the pixel limit is told it's too large", async () => {
+    // Only the header is read, so a small JPEG whose header claims the huge size is enough (encoding a real one took 5 s).
     const side = Math.ceil(Math.sqrt(MAX_INPUT_PIXELS)) + 10;
-    const huge = await sharp({ create: { width: side, height: side, channels: 3, background: "#fff" } }).jpeg({ quality: 10 }).toBuffer();
+    const huge = Buffer.from(await sharp({ create: { width: 16, height: 16, channels: 3, background: "#fff" } }).jpeg({ quality: 10 }).toBuffer());
+    const sof = huge.indexOf(Buffer.from([0xff, 0xc0]));
+    huge.writeUInt16BE(side, sof + 5); // height
+    huge.writeUInt16BE(side, sof + 7); // width
+    expect((await sharp(huge).metadata()).width).toBe(side);
     await expect(preparePhoto(new Uint8Array(huge))).rejects.toThrow("too large");
   });
 

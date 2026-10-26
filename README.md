@@ -73,6 +73,25 @@ In development, pass a cache directory. A request already made is answered from 
 
 ffmpeg must be installed to run the server and the tests.
 
+### Cut-outs
+
+`src/pipeline/cutouts.ts` turns one stall photo into one transparent PNG per product, following Meta's SAM 3 Agent pattern:
+
+1. The photo is turned upright (EXIF) and shrunk to at most 1600 px.
+2. Muse Spark proposes up to 12 products, each with two short phrasings, plus one broad phrase for the stall's goods. Phrasings with lists, negation or position words are dropped, because SAM 3.1 can't use them.
+3. SAM 3.1 segments each phrasing, and "person" once. Masks under 0.5 confidence are dropped, as are masks lying mostly on a person. Overlapping masks are deduped by confidence (more than 30% of the smaller mask means a duplicate).
+4. Muse Spark reviews a zoomed crop of each mask and keeps only sellable products. A crop without a clear verdict is dropped.
+5. Muse Spark boxes any product nothing caught, and SAM 3.1 segments those boxes in one request (at most 16).
+6. Each product is cut from the trader's own pixels with its mask. Nothing is generated.
+
+One photo costs about 20 to 30 paid calls, so a job takes one stall photo, within the 60-call limit.
+
+To try it on a real photo (needs `MODEL_API_KEY`; responses are cached in `.cache/`):
+
+```bash
+bun src/pipeline/try-cutouts.ts stall.jpg
+```
+
 ## Build log
 
 See [docs/build-log.md](docs/build-log.md).

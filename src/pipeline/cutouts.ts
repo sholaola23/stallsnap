@@ -1,0 +1,267 @@
+// Stall photo to one cut-out per product, following Meta's SAM 3 Agent pattern:
+//
+// 1. Muse Spark looks at the photo and proposes each product with two short
+//    phrasings, plus one broad phrase for the stall's goods.
+// 2. SAM 3.1 segments every phrasing, and "person" once.
+// 3. Masks lying mostly on a person are dropped; overlapping masks are
+//    deduped greedily by confidence.
+// 4. Muse Spark reviews a zoomed crop of each mask: is it one sellable
+//    product? Rejected crops are dropped.
+// 5. Muse Spark marks boxes round products nothing caught; SAM segments those
+//    boxes in one request.
+// 6. Each kept mask becomes a transparent PNG cut from the trader's own
+//    pixels. Nothing is generated.
+import sharp from "sharp";
+import type { MetaClient } from "../meta/client.ts";
+import { jpegDataUrl, sparkJson, type UserPart } from "../meta/spark.ts";
+import { boxOf, cleanPhrase, dedupe, dropPeople, fromGrid, iou, overlap, toGrid } from "./masks.ts";
+import type { Photo } from "./photo.ts";
+import { MAX_BOXES, segmentBoxes, segmentPhrase, type Mask } from "./sam.ts";
+
+export const MAX_PRODUCTS = 12;
+const REVIEW_BATCH = 8;
+const SAM_PARALLEL = 4;
+
+export type Cutout = {
+  name: string;
+  mask: Mask;
+  /** "phrase": found by a concept phrase and approved on review; "box": found from a box Spark drew. */
+  source: "phrase" | "box";
+};
+
+type Proposal = { name: string; phrases: string[] };
+type Candidate = Mask & { name: string };
+
+const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+/** Model output is untrusted: anything that isn't an object reads as an empty one. */
+const rec = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+export async function proposeProducts(client: MetaClient, jobId: string, photo: Photo): Promise<{ products: Proposal[]; broad: string | undefined }> {
+  const out = (await sparkJson(client, {
+    jobId,
+    what: "spark propose products",
+    name: "stall_products",
+    maxOutputTokens: 8000,
+    developer: [
+      "You list the products for sale on a market stall photo so each one can be cut out for the trader's catalogue.",
+      `List each distinct product once, at most ${MAX_PRODUCTS}. Give a short catalogue name and two short noun phrases`,
+      "an image segmentation model can search for: one to three plain words each, one concept, such as \"tomato tin\" or \"milk tin\".",
+      "No lists, no negation, no position words (left, top, behind), no brand-only words.",
+      "Also give one broad phrase covering most goods on the stall, such as \"packet\" or \"bottle\".",
+      "Ignore people, hands, tables, the stall structure, signs, price tags and bags not for sale.",
+      "Only list what you can see. Never add products that are not in the photo.",
+    ].join(" "),
+    user: [
+      { type: "input_text", text: "The stall photo:" },
+      { type: "input_image", image_url: jpegDataUrl(photo.jpeg) },
+    ],
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["products", "broad_phrase"],
+      properties: {
+        products: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "phrase_a", "phrase_b"],
+            properties: { name: { type: "string" }, phrase_a: { type: "string" }, phrase_b: { type: "string" } },
+          },
+        },
+        broad_phrase: { type: "string" },
+      },
+    },
+  })) as { products?: unknown; broad_phrase?: unknown };
+
+  const products: Proposal[] = [];
+  for (const item of Array.isArray(out.products) ? out.products : []) {
+    const p = rec(item);
+    const name = str(p.name).slice(0, 60);
+    const phrases = [...new Set([p.phrase_a, p.phrase_b].map((x) => cleanPhrase(str(x))).filter((x): x is string => !!x))];
+    if (name && phrases.length > 0) products.push({ name, phrases });
+    if (products.length === MAX_PRODUCTS) break;
+  }
+  return { products, broad: cleanPhrase(str(out.broad_phrase)) };
+}
+
+/** A padded crop around a mask, small enough to review cheaply. */
+async function reviewCrop(photo: Photo, m: Mask): Promise<Uint8Array> {
+  const padX = Math.round(m.width * 0.15);
+  const padY = Math.round(m.height * 0.15);
+  const left = Math.max(0, m.left - padX);
+  const top = Math.max(0, m.top - padY);
+  const width = Math.min(photo.width, m.left + m.width + padX) - left;
+  const height = Math.min(photo.height, m.top + m.height + padY) - top;
+  const buf = await sharp(photo.jpeg)
+    .extract({ left, top, width, height })
+    .resize({ width: 384, height: 384, fit: "inside", withoutEnlargement: false })
+    .jpeg({ quality: 80 })
+    .toBuffer();
+  return new Uint8Array(buf);
+}
+
+/** Spark's verdict per candidate. A candidate with no clear verdict counts as rejected. */
+export async function reviewCandidates(client: MetaClient, jobId: string, photo: Photo, candidates: readonly Candidate[]): Promise<Candidate[]> {
+  const kept: Candidate[] = [];
+  for (let start = 0; start < candidates.length; start += REVIEW_BATCH) {
+    const batch = candidates.slice(start, start + REVIEW_BATCH);
+    const user: UserPart[] = [];
+    for (const [i, c] of batch.entries()) {
+      user.push({ type: "input_text", text: `Crop ${i + 1} (suggested name: ${c.name}):` });
+      user.push({ type: "input_image", image_url: jpegDataUrl(await reviewCrop(photo, c)) });
+    }
+    const out = (await sparkJson(client, {
+      jobId,
+      what: `spark review ${batch.length} crops`,
+      name: "crop_review",
+      maxOutputTokens: 6000,
+      developer: [
+        "Each crop is one region an image segmentation model found on a market stall photo.",
+        "For each crop, decide whether it shows one sellable product, or a neat group of the same product, clearly enough for a catalogue.",
+        "Reject people, hands, tables, the stall, signs, price tags, empty background, a small part of a product, and crops mixing different products.",
+        "For an accepted crop give a short catalogue name for what you see; for a rejected crop give an empty name.",
+        "Give exactly one verdict per crop, using its crop number.",
+      ].join(" "),
+      user,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["verdicts"],
+        properties: {
+          verdicts: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["crop", "sellable", "name"],
+              properties: { crop: { type: "integer" }, sellable: { type: "boolean" }, name: { type: "string" } },
+            },
+          },
+        },
+      },
+    })) as { verdicts?: unknown };
+
+    const verdicts = new Map<number, { sellable: boolean; name: string } | null>();
+    for (const item of Array.isArray(out.verdicts) ? out.verdicts : []) {
+      const v = rec(item);
+      const crop = v.crop;
+      if (typeof crop !== "number" || !Number.isInteger(crop) || crop < 1 || crop > batch.length) continue;
+      const sellable = v.sellable;
+      // Two verdicts for one crop that disagree count as no verdict.
+      const next = typeof sellable === "boolean" ? { sellable, name: str(v.name).slice(0, 60) } : null;
+      const prev = verdicts.get(crop);
+      verdicts.set(crop, prev === undefined ? next : prev && next && prev.sellable === next.sellable ? prev : null);
+    }
+    for (const [i, c] of batch.entries()) {
+      const v = verdicts.get(i + 1);
+      if (v?.sellable) kept.push({ ...c, name: v.name || c.name });
+    }
+  }
+  return kept;
+}
+
+/** Boxes, in photo pixels, round sellable products none of the kept cut-outs covers. */
+export async function findMissed(client: MetaClient, jobId: string, photo: Photo, kept: readonly Candidate[]): Promise<{ name: string; box: ReturnType<typeof boxOf> }[]> {
+  const listed = kept.map((k) => ({ name: k.name, ...toGrid(boxOf(k), photo) }));
+  const out = (await sparkJson(client, {
+    jobId,
+    what: "spark find missed products",
+    name: "missed_products",
+    maxOutputTokens: 8000,
+    developer: [
+      "A market stall photo and the boxes of products already cut out are given. Coordinates are on a 0 to 1000 grid:",
+      "x from the left edge, y from the top edge.",
+      `List sellable products you can clearly see that no listed box covers, at most ${MAX_BOXES}, each with a short name and a tight box.`,
+      "Ignore people, tables, the stall, signs and price tags. If nothing was missed, return an empty list. Never guess.",
+    ].join(" "),
+    user: [
+      { type: "input_text", text: `Already cut out: ${JSON.stringify(listed)}` },
+      { type: "input_image", image_url: jpegDataUrl(photo.jpeg) },
+    ],
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["missed"],
+      properties: {
+        missed: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "x1", "y1", "x2", "y2"],
+            properties: { name: { type: "string" }, x1: { type: "integer" }, y1: { type: "integer" }, x2: { type: "integer" }, y2: { type: "integer" } },
+          },
+        },
+      },
+    },
+  })) as { missed?: unknown };
+
+  const boxes: { name: string; box: ReturnType<typeof boxOf> }[] = [];
+  for (const m of Array.isArray(out.missed) ? out.missed : []) {
+    const g = rec(m);
+    const name = str(g.name).slice(0, 60);
+    const box = fromGrid({ x1: Number(g.x1), y1: Number(g.y1), x2: Number(g.x2), y2: Number(g.y2) }, photo);
+    if (!name || !box) continue;
+    if (kept.some((k) => iou(boxOf(k), box) > 0.5) || boxes.some((b) => iou(b.box, box) > 0.5)) continue;
+    boxes.push({ name, box });
+    if (boxes.length === MAX_BOXES) break;
+  }
+  return boxes;
+}
+
+async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return out;
+}
+
+/** Runs steps 1 to 5. The result is in reading order: top to bottom, then left to right. */
+export async function findProducts(client: MetaClient, jobId: string, photo: Photo): Promise<Cutout[]> {
+  const { products, broad } = await proposeProducts(client, jobId, photo);
+
+  const queries: { phrase: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const p of products) for (const phrase of p.phrases) if (!seen.has(phrase)) (seen.add(phrase), queries.push({ phrase, name: p.name }));
+  if (broad && !seen.has(broad)) queries.push({ phrase: broad, name: "" });
+
+  const [people, ...found] = await mapLimit([{ phrase: "person", name: "" }, ...queries], SAM_PARALLEL, (q) => segmentPhrase(client, jobId, photo, q.phrase));
+  const candidates: Candidate[] = found.flatMap((masks, i) => masks.map((m) => ({ ...m, name: queries[i]!.name || "Product" })));
+  const unique = dedupe(dropPeople(candidates, people ?? []));
+
+  const kept = await reviewCandidates(client, jobId, photo, unique);
+  const cutouts: Cutout[] = kept.map((k) => ({ name: k.name, mask: k, source: "phrase" }));
+
+  const missed = await findMissed(client, jobId, photo, kept);
+  if (missed.length > 0) {
+    const masks = await segmentBoxes(client, jobId, photo, missed.map((m) => m.box));
+    const fromBoxes: Candidate[] = masks.map((m) => ({ ...m, name: missed[Number(m.objectId)]?.name ?? "Product" }));
+    for (const m of dedupe(fromBoxes)) {
+      if (kept.every((k) => overlap(k, m) <= 0.3 * Math.min(k.area, m.area))) cutouts.push({ name: m.name, mask: m, source: "box" });
+    }
+  }
+
+  return cutouts.sort((a, b) => a.mask.top - b.mask.top || a.mask.left - b.mask.left);
+}
+
+/** A transparent PNG of one product, cut from the photo's own pixels with its mask. */
+export async function cutoutPng(photo: Photo, mask: Mask): Promise<Uint8Array> {
+  const rgb = await sharp(photo.jpeg).extract({ left: mask.left, top: mask.top, width: mask.width, height: mask.height }).removeAlpha().raw().toBuffer();
+  const rgba = Buffer.alloc(mask.width * mask.height * 4);
+  for (let i = 0; i < mask.width * mask.height; i++) {
+    rgba[i * 4] = rgb[i * 3]!;
+    rgba[i * 4 + 1] = rgb[i * 3 + 1]!;
+    rgba[i * 4 + 2] = rgb[i * 3 + 2]!;
+    rgba[i * 4 + 3] = mask.bits[i] ? 255 : 0;
+  }
+  const png = await sharp(rgba, { raw: { width: mask.width, height: mask.height, channels: 4 } }).png().toBuffer();
+  return new Uint8Array(png);
+}

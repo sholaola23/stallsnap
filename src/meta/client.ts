@@ -84,9 +84,15 @@ export class MetaClient {
 async function readJson(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!res.ok) throw new MetaApiError(res.status, text.slice(0, 500));
+  let body: unknown;
   try {
-    return JSON.parse(text);
+    body = JSON.parse(text);
   } catch {
     throw new MetaApiError(res.status, `response was not JSON: ${text.slice(0, 200)}`);
   }
+  // Every Meta response is a JSON object; anything else is treated as a failed call.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new MetaApiError(res.status, `response was not a JSON object: ${text.slice(0, 200)}`);
+  }
+  return body;
 }

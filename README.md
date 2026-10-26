@@ -61,6 +61,18 @@ Voice notes are accepted whether Meta sends them as type `voice` or as `audio` w
 
 The log holds traders' numbers and messages, so `.data/` is kept out of git.
 
+## Meta Model API
+
+`src/meta/client.ts` is the only code that calls the Meta Model API (`https://api.meta.ai/v1`), and every call goes through `SpendGuard.paid()`. Costs come from Meta's published Standard-mode prices (`src/meta/costs.ts`, read 26 Oct 2026). Contributor mode is never used, because it lets Meta train on traders' photos and voice notes.
+
+In development, pass a cache directory. A request already made is answered from `.cache/` for free and never reaches SpendGuard, so reruns cost nothing.
+
+### Voice notes
+
+`src/pipeline/voice.ts` converts a WhatsApp voice note (OGG/Opus) to mono 16-bit 24 kHz WAV with ffmpeg, then sends it to Muse Voice Transcribe. Nigerian Pidgin isn't one of that model's evaluated languages, so the request sets `languageBias: ["English"]` and passes price words (naira, ₦, kobo) and the stall's item names as keywords. Notes under 0.3 seconds or over 10 minutes are refused before any paid call. An empty transcript asks the trader to send again; nothing is guessed. Pidgin accuracy is a measured risk, not a solved one.
+
+ffmpeg must be installed to run the server and the tests.
+
 ## Build log
 
 See [docs/build-log.md](docs/build-log.md).

@@ -17,36 +17,55 @@ export type EnvName = (typeof ENV_NAMES)[number];
 const PLACEHOLDERS = new Set([
   "",
   "changeme",
-  "change-me",
-  "change_me",
   "todo",
   "tbd",
-  "xxx",
   "n/a",
   "na",
+  "nil",
   "none",
   "null",
   "undefined",
   "placeholder",
-  "your-key-here",
+  "not set",
+  "not given",
+  "unset",
+  "empty",
+  "secret",
 ]);
+const PLACEHOLDER_PATTERNS = [
+  /^x+$/, // xxx, XXXXXXXX
+  /^\*+$/, // ***
+  /^\.+$/, // ...
+  /^<.*>$/, // <your key>
+  /^\$\{?[a-z0-9_]+\}?$/, // $MODEL_API_KEY, ${MODEL_API_KEY}
+  /^change[-_ ]?me$/, // change-me, change_me
+  /^(your|my|insert|enter|put|add)[-_ ]/, // your-api-key, insert-key-here
+  /[-_ ]here$/, // key_here
+  /^[a-z0-9_-]{1,8}\.{2,}$/, // sk-..., EAAG...
+];
 
-function isPlaceholder(value: string): boolean {
-  const v = value.trim().toLowerCase();
-  if (PLACEHOLDERS.has(v)) return true;
-  // "<your key>", "${MODEL_API_KEY}", "..."
-  if (/^<.*>$/.test(v) || /^\$\{.*\}$/.test(v) || /^\.+$/.test(v)) return true;
-  return false;
+/** Removes zero-width characters, surrounding space and matching surrounding quotes. */
+function clean(value: string): string {
+  let v = value.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "").trim();
+  while (v.length >= 2 && (v[0] === '"' || v[0] === "'" || v[0] === "`") && v.at(-1) === v[0]) v = v.slice(1, -1).trim();
+  return v;
 }
 
-/** The trimmed value, or undefined when it is missing, blank or a placeholder. */
+function isPlaceholder(name: string, value: string): boolean {
+  const v = value.toLowerCase();
+  if (PLACEHOLDERS.has(v) || v === name.toLowerCase()) return true;
+  return PLACEHOLDER_PATTERNS.some((p) => p.test(v));
+}
+
+/** The cleaned value, or undefined when it is missing, blank or a placeholder. */
 export function readEnv(
   name: EnvName,
   env: Record<string, string | undefined> = process.env,
 ): string | undefined {
   const raw = env[name];
-  if (raw === undefined || isPlaceholder(raw)) return undefined;
-  return raw.trim();
+  if (raw === undefined) return undefined;
+  const value = clean(raw);
+  return isPlaceholder(name, value) ? undefined : value;
 }
 
 /** The names from `wanted` that have no usable value. */

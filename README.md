@@ -70,11 +70,13 @@ The log holds traders' numbers and messages, so `.data/` is kept out of git.
 
 `src/meta/client.ts` is the only code that calls the Meta Model API (`https://api.meta.ai/v1`), and every call goes through `SpendGuard.paid()`. Costs come from Meta's published Standard-mode prices (`src/meta/costs.ts`, read 26 Oct 2026). Contributor mode is never used, because it lets Meta train on traders' photos and voice notes.
 
+Each request has a 120-second time limit. Rate limits (429), Meta server errors (500, 502, 503, 504), timeouts and network failures are retried up to 3 attempts in all, with exponential backoff and jitter, waiting at least as long as Meta's `Retry-After` (capped at 30 seconds). Other errors are not retried. Every attempt is its own paid call, so SpendGuard counts and caps each one. A missing or placeholder `MODEL_API_KEY` stops the client being created, before any paid call.
+
 In development, pass a cache directory. A request already made is answered from `.cache/` for free and never reaches SpendGuard, so reruns cost nothing.
 
 ### Voice notes
 
-`src/pipeline/voice.ts` converts a WhatsApp voice note (OGG/Opus) to mono 16-bit 24 kHz WAV with ffmpeg, then sends it to Muse Voice Transcribe. Nigerian Pidgin isn't one of that model's evaluated languages, so the request sets `languageBias: ["English"]` and passes price words (naira, ₦, kobo) and the stall's item names as keywords. Notes under 0.3 seconds or over 10 minutes are refused before any paid call. An empty transcript asks the trader to send again; nothing is guessed. Pidgin accuracy is a measured risk, not a solved one.
+`src/pipeline/voice.ts` converts a WhatsApp voice note (OGG/Opus) to mono 16-bit 24 kHz WAV with ffmpeg, then sends it to Muse Voice Transcribe. Nigerian Pidgin isn't one of that model's evaluated languages, so the request sets `languageBias: ["English"]` and passes price words (naira, ₦, kobo) and the stall's item names as keywords. Notes under 0.3 seconds or over 10 minutes are refused before any paid call. A file over 16 MB (WhatsApp's own audio limit) is refused before decoding, and decoding stops at 601 seconds, so a very long note can't fill the server's memory. An empty transcript asks the trader to send again; nothing is guessed. Pidgin accuracy is a measured risk, not a solved one.
 
 ffmpeg must be installed to run the server and the tests.
 

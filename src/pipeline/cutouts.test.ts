@@ -58,7 +58,7 @@ function stallMeta(overrides: Partial<Record<string, (c: FakeCall) => unknown>> 
       const names = d.texts.map((t) => /suggested name: (.*)\):$/.exec(t)?.[1] ?? "");
       return responseWithText(
         JSON.stringify({
-          verdicts: names.map((n, i) => ({ crop: i + 1, sellable: n !== "Product", name: n === "Product" ? "" : n })),
+          verdicts: names.map((n, i) => ({ crop: i + 1, sellable: n !== "Product", name: n === "Product" ? "" : n, same_as: 0 })),
         }),
       );
     }
@@ -93,7 +93,7 @@ describe("findProducts", () => {
       crop_review: (c) => {
         const d = describeCall(c.body);
         reviewed.push(...d.texts);
-        return responseWithText(JSON.stringify({ verdicts: d.texts.map((_, i) => ({ crop: i + 1, sellable: true, name: "" })) }));
+        return responseWithText(JSON.stringify({ verdicts: d.texts.map((_, i) => ({ crop: i + 1, sellable: true, name: "", same_as: 0 })) }));
       },
     });
     const client = new MetaClient({ apiKey: "k", guard, fetch: meta.fetch });

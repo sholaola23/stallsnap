@@ -11,13 +11,23 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
       - name: Install ffmpeg (voice note conversion)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+        timeout-minutes: 6
+        run: |
+          # apt mirrors sometimes hang: try the runner's existing package lists
+          # first, refresh them only if needed, and give each attempt a time limit.
+          for attempt in 1 2 3; do
+            if timeout 120 sudo apt-get install -y -qq --no-install-recommends ffmpeg; then break; fi
+            timeout 120 sudo apt-get update -qq || true
+            [ "$attempt" = 3 ] && exit 1
+          done
+          ffmpeg -hide_banner -encoders | grep -q libopus
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck

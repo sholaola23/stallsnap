@@ -31,7 +31,23 @@ export const MAX_CHANGES = 5;
 export const PHOTO_TYPES = { mimeTypes: ["image/jpeg", "image/png"], maxBytes: 5 * 1024 * 1024 };
 export const AUDIO_TYPES = { mimeTypes: ["audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/amr"], maxBytes: 16 * 1024 * 1024 };
 const TYPING_EVERY_MS = 20_000;
-const YES = /^(yes|yes publish|yes,? publish|yeah|ok|okay|publish|correct|na so|confam|go ahead|👍)$/i;
+/** Older than this, the trader's 24-hour reply window has probably closed, so no paid work starts. */
+export const MAX_MESSAGE_AGE_MS = 23 * 60 * 60 * 1000;
+const YES_WORD = "(yes|yeah|yep|ok|okay|publish|publish it|correct|confirm|confirmed|na so|confam|go ahead|oya|sure|done|go)";
+const YES = new RegExp(`^(👍+|${YES_WORD}( ${YES_WORD})*( (please|pls|o|oh|sir|ma|👍+))*)$`, "u");
+
+/** True when a text means "publish": "Yes please", "ok o", "👍🏾", "Yes, publish it!". */
+export function isYes(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .replace(/[\u{1F3FB}-\u{1F3FF}\uFE0F]/gu, "") // skin tones, emoji style
+    .replace(/👍/g, " 👍 ")
+    .replace(/[,.!]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/👍 (?=👍)/gu, "👍");
+  return YES.test(t);
+}
 
 export type Messenger = Pick<GraphClient, "sendText" | "sendButton" | "sendLink" | "typing" | "download">;
 
@@ -54,6 +70,7 @@ export type ConversationOptions = {
   publish: Publisher;
   dataDir: string;
   newJobId?: () => string;
+  now?: () => number;
 };
 
 type Input = Session["inputs"][number];
@@ -62,7 +79,7 @@ export class Conversation {
   readonly #o: Required<ConversationOptions>;
 
   constructor(o: ConversationOptions) {
-    this.#o = { newJobId: () => `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ...o };
+    this.#o = { newJobId: () => `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, now: () => Date.now(), ...o };
   }
 
   async handle(msg: Inbound): Promise<void> {
@@ -71,8 +88,10 @@ export class Conversation {
 
     // Handling is serial, so these phases at the start mean a crash cut the work off.
     const resuming = s?.phase === "working" || s?.phase === "publishing";
-    if (s?.phase === "working") await this.#work(s, msg.id);
-    else if (s?.phase === "publishing") await this.#publish(s);
+    if (s?.phase === "working") await this.#work(s, s.trigger ?? msg.id);
+    else if (s?.phase === "publishing") await this.#publish(s, s.trigger ?? msg.id);
+    // The replayed message that started the cut-off work is now fully handled.
+    if (resuming && s?.trigger === msg.id) return;
     s = store.get(msg.from);
     if (s && seen(s, msg.id)) {
       // A message handled before arrives again only when a crash stopped its
@@ -82,7 +101,16 @@ export class Conversation {
       return;
     }
 
+    if (this.#o.now() - msg.timestamp * 1000 > MAX_MESSAGE_AGE_MS) {
+      // Meta retries for days. A reply this late would be refused, so nothing paid starts.
+      return void console.log(`Skipped message ${msg.id}: older than 23 hours`);
+    }
+
     const kind = msg.kind === "audio" ? "voice" : msg.kind;
+    if (msg.kind === "other" && msg.type === "reaction") {
+      if (s?.phase === "confirming") return void (await this.#say(msg.from, copy.tapToPublish));
+      return;
+    }
     if (kind === "other") return void (await this.#say(msg.from, copy.unsupported));
 
     if (!s || s.phase === "published" || s.phase === "failed") {
@@ -115,6 +143,10 @@ export class Conversation {
       s.inputs.push({ messageId: msg.id, kind: "voice", mediaId: msg.mediaId, mimeType: msg.mimeType });
     } else if (msg.kind === "text") {
       s.inputs.push({ messageId: msg.id, kind: "text", text: msg.text });
+    } else if (msg.kind === "button") {
+      // A button from an earlier list, tapped after a new photo started this one.
+      this.#o.store.save(s);
+      return void (await this.#say(s.trader, s.photo ? copy.oldListAfterPhoto : copy.staleButton));
     } else {
       this.#o.store.save(s);
       return void (await this.#say(s.trader, copy.welcome));
@@ -137,10 +169,10 @@ export class Conversation {
       return this.#collect(fresh, msg);
     }
     if (msg.kind === "button") {
-      if (s.phase === "confirming" && msg.replyId === confirmId(s)) return this.#publish(s);
+      if (s.phase === "confirming" && msg.replyId === confirmId(s)) return this.#publish(s, msg.id);
       return void (await this.#say(s.trader, copy.staleButton));
     }
-    if (msg.kind === "text" && s.phase === "confirming" && YES.test(msg.text.trim().replace(/[.!]+$/, ""))) return this.#publish(s);
+    if (msg.kind === "text" && s.phase === "confirming" && isYes(msg.text)) return this.#publish(s, msg.id);
     if (msg.kind !== "text" && msg.kind !== "voice" && msg.kind !== "audio") return;
 
     if (s.phase === "confirming" && s.changes >= MAX_CHANGES) return void (await this.#say(s.trader, copy.tooManyChanges));
@@ -162,6 +194,7 @@ export class Conversation {
     const { log, store, messenger } = this.#o;
     const firstRun = s.items.length === 0;
     s.phase = "working";
+    s.trigger = triggerId;
     store.save(s);
     if (firstRun) await this.#say(s.trader, copy.working);
     await messenger.typing(triggerId);
@@ -169,16 +202,15 @@ export class Conversation {
     try {
       if (firstRun) {
         const photo = s.photo!;
-        let items: Item[];
-        try {
-          items = await log.step(s.jobId, `cutouts:${photo.messageId}`, () => this.#cutouts(s, photo));
-        } catch (e) {
-          if (!(e instanceof PhotoError || e instanceof MediaError)) throw e;
+        // A photo the trader can fix by resending is a saved answer, not a failed step, so the job stays open.
+        const found = await log.step(s.jobId, `cutouts:${photo.messageId}`, () => orTell(() => this.#cutouts(s, photo)));
+        if ("tell" in found) {
           s.photo = null;
           s.phase = "collecting";
           store.save(s);
-          return void (await this.#say(s.trader, traderMessage(e)));
+          return void (await this.#say(s.trader, found.tell));
         }
+        const items = found.ok;
         if (items.length === 0) {
           s.phase = "failed";
           store.save(s);
@@ -195,16 +227,15 @@ export class Conversation {
           said.push(input.text);
           continue;
         }
-        try {
-          said.push(await this.#transcript(s, input));
-        } catch (e) {
-          if (!(e instanceof VoiceNoteError || e instanceof MediaError)) throw e;
+        const heard = await this.#transcript(s, input);
+        if ("ok" in heard) said.push(heard.ok);
+        else {
           s.inputs = s.inputs.filter((i) => i.messageId !== input.messageId);
           if (back === "asking") s.askRounds--;
           if (back === "confirming") s.changes--;
           s.phase = back;
           store.save(s);
-          return void (await this.#say(s.trader, traderMessage(e)));
+          return void (await this.#say(s.trader, heard.tell));
         }
       }
 
@@ -212,6 +243,7 @@ export class Conversation {
       const result = await log.step(s.jobId, `pricing:v${version}`, () => this.#o.models.price(s.jobId, s.items.map(({ item, name }) => ({ item, name })), said));
       s.lines = result.lines;
       s.version = version;
+      s.listSent = 0;
       if (s.askRounds === 0 && s.changes === 0 && s.lines.some((l) => !l.price)) {
         s.phase = "asking";
         store.save(s);
@@ -240,24 +272,38 @@ export class Conversation {
     });
   }
 
-  async #transcript(s: Session, input: Extract<Input, { kind: "voice" }>): Promise<string> {
-    return this.#o.log.step(s.jobId, `transcript:${input.messageId}`, async () => {
-      const { bytes } = await this.#o.messenger.download(input.mediaId, AUDIO_TYPES);
-      return this.#o.models.transcribe(s.jobId, await this.#o.models.toWav(bytes), s.items.map((i) => i.name));
-    });
+  async #transcript(s: Session, input: Extract<Input, { kind: "voice" }>): Promise<Told<string>> {
+    return this.#o.log.step(s.jobId, `transcript:${input.messageId}`, () =>
+      orTell(async () => {
+        const { bytes } = await this.#o.messenger.download(input.mediaId, AUDIO_TYPES);
+        return this.#o.models.transcribe(s.jobId, await this.#o.models.toWav(bytes), s.items.map((i) => i.name));
+      }),
+    );
   }
 
+  /**
+   * Sends the list parts that haven't gone out yet for this version. Each part
+   * is recorded once sent, so a replay after a crash between a long list's
+   * text and its button sends only the button.
+   */
   async #sendList(s: Session): Promise<void> {
     const body = copy.list(s.lines);
     const button = { id: confirmId(s), title: copy.publishButton };
-    if (body.length <= 1024) return void (await this.#o.messenger.sendButton(s.trader, body, button));
-    await this.#say(s.trader, body);
-    await this.#o.messenger.sendButton(s.trader, "Tap Yes, publish to put this list online.", button);
+    const parts: (() => Promise<unknown>)[] =
+      body.length <= 1024
+        ? [() => this.#o.messenger.sendButton(s.trader, body, button)]
+        : [() => this.#say(s.trader, body), () => this.#o.messenger.sendButton(s.trader, copy.tapToPublish, button)];
+    for (let i = s.listSent ?? 0; i < parts.length; i++) {
+      await parts[i]!();
+      s.listSent = i + 1;
+      this.#o.store.save(s);
+    }
   }
 
-  async #publish(s: Session): Promise<void> {
+  async #publish(s: Session, triggerId: string): Promise<void> {
     const { store, log } = this.#o;
     s.phase = "publishing";
+    s.trigger = triggerId;
     store.save(s);
     try {
       const url = await this.#o.publish(s);
@@ -310,6 +356,18 @@ function traderMessage(e: unknown): string {
     return "I couldn't download that. Please send it again.";
   }
   return copy.failed;
+}
+
+type Told<T> = { ok: T } | { tell: string };
+
+/** Runs `run`; a problem the trader can fix by resending becomes the message to tell them. */
+async function orTell<T>(run: () => Promise<T>): Promise<Told<T>> {
+  try {
+    return { ok: await run() };
+  } catch (e) {
+    if (e instanceof PhotoError || e instanceof VoiceNoteError || e instanceof MediaError) return { tell: traderMessage(e) };
+    throw e;
+  }
 }
 
 /** Reads a saved cut-out, for the catalogue page. */

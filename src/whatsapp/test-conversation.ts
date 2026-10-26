@@ -27,7 +27,7 @@ export const msg = {
   voice: (mediaId: string): Inbound => ({ id: `wamid.${++n}`, from: TRADER, timestamp: n, phoneNumberId: "p", kind: "voice", mediaId, mimeType: "audio/ogg" }),
   text: (text: string): Inbound => ({ id: `wamid.${++n}`, from: TRADER, timestamp: n, phoneNumberId: "p", kind: "text", text }),
   button: (replyId: string): Inbound => ({ id: `wamid.${++n}`, from: TRADER, timestamp: n, phoneNumberId: "p", kind: "button", replyId, title: "Yes, publish" }),
-  other: (): Inbound => ({ id: `wamid.${++n}`, from: TRADER, timestamp: n, phoneNumberId: "p", kind: "other", type: "sticker" }),
+  other: (type = "sticker"): Inbound => ({ id: `wamid.${++n}`, from: TRADER, timestamp: n, phoneNumberId: "p", kind: "other", type }),
 };
 
 /** Prices each item whose name the trader said with a number after "na". */
@@ -42,7 +42,7 @@ export function sayPrices(items: readonly { item: number; name: string }[], said
   return { lines, events: [], turns: 1, stopped: "all-done" };
 }
 
-export function harness(opts: { dir?: string; products?: string[]; models?: Partial<Models>; media?: Record<string, Uint8Array | Error>; hang?: Partial<Record<"sendButton" | "price", boolean>> } = {}) {
+export function harness(opts: { dir?: string; products?: string[]; models?: Partial<Models>; media?: Record<string, Uint8Array | Error>; hang?: Partial<Record<"sendButton" | "price" | "publish", boolean>>; now?: () => number } = {}) {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "conv-"));
   const sent: Sent[] = [];
   const calls = { cutouts: 0, transcribe: 0, price: 0, publish: 0 };
@@ -87,7 +87,9 @@ export function harness(opts: { dir?: string; products?: string[]; models?: Part
     messenger,
     models,
     dataDir: dir,
-    publish: async (s) => (calls.publish++, `https://stall.test/c/${s.jobId}`),
+    publish: async (s) => (calls.publish++, opts.hang?.publish ? never : `https://stall.test/c/${s.jobId}`),
+    // Test messages carry small timestamps (1, 2, 3 seconds), so "now" is just after them.
+    now: opts.now ?? (() => 1_000_000),
   });
   const texts = () => sent.filter((s) => s.kind !== "typing").map((s) => s.body ?? "");
   const last = () => sent.filter((s) => s.kind !== "typing").at(-1)!;

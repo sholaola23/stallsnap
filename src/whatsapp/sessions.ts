@@ -25,6 +25,10 @@ export type Session = {
   askRounds: number;
   changes: number;
   url: string | null;
+  /** The message that started the current working or publishing phase, so a replay of it after a crash isn't handled twice. */
+  trigger?: string;
+  /** How many parts of the current list version went out (a long list is a text and then a button). */
+  listSent?: number;
 };
 
 export function newSession(trader: string, jobId: string): Session {

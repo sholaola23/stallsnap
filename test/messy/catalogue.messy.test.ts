@@ -11,7 +11,8 @@ test("script and markup in item names are shown as text", () => {
   const html = page(['<script>alert(1)</script>', 'Rice" onerror="x', "Tom & Jerry's"]);
   expect(html).not.toContain("<script>alert");
   expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-  expect(html).toContain('alt="Rice&quot; onerror=&quot;x"');
+  expect(html).toContain("<h2>Rice&quot; onerror=&quot;x</h2>");
+  expect(html).not.toContain('onerror="x"');
   expect(html).toContain("Tom &amp; Jerry&#39;s");
 });
 
@@ -39,3 +40,59 @@ test("a line without its cut-out is never published", async () => {
   s.lines = [{ item: 1, name: "Rice", price: null, question: "How much?" }];
   await expect(publishCatalogue(s, "/tmp/never-written", "https://x.test")).rejects.toThrow("no cut-out");
 });
+
+// QA round 1 on PR #9: a damaged catalogue file must never show source or a stack trace.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { serveCatalogue } from "../../src/catalogue/publish.ts";
+
+const SLUG = "abcdefghijklmnop";
+function damaged(contents: string) {
+  const dir = mkdtempSync(join(tmpdir(), "cat-damaged-"));
+  mkdirSync(join(dir, ".data", "public", SLUG), { recursive: true });
+  writeFileSync(join(dir, ".data", "public", SLUG, "catalogue.json"), contents);
+  return dir;
+}
+const leaks = (body: string) => /publish\.ts|page\.ts|at \w+ \(|<html|SyntaxError|TypeError/.test(body);
+
+for (const [name, contents] of [
+  ["truncated JSON", '{"title":"StallSnap Demo Stall","items":[{"name":"Ri'],
+  ["the wrong shape", '{"title":"x","items":5}'],
+  ["empty", ""],
+] as const) {
+  test(`a catalogue file that is ${name} gets a plain 500 with no source or stack`, async () => {
+    const dir = damaged(contents);
+    const res = serveCatalogue(`/c/${SLUG}`, join(dir, ".data"))!;
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toStartWith("text/plain");
+    expect(leaks(await res.text())).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
+test("the real server answers a damaged catalogue with a plain 500, not Bun's debug page", async () => {
+  const dir = damaged('{"title":"StallSnap Demo Stall","items":[{"name":"Ri');
+  const port = 40_000 + Math.floor(Math.random() * 20_000);
+  const server = Bun.spawn(["bun", join(import.meta.dir, "../../src/server.ts")], {
+    cwd: dir,
+    env: { PATH: process.env.PATH ?? "", PORT: String(port), APP_SECRET: "qa-app-secret-1", WHATSAPP_VERIFY_TOKEN: "qa-verify-token-1", ALLOWED_NUMBERS: "447700900123" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  try {
+    let res: Response | undefined;
+    for (let i = 0; i < 50 && !res; i++) {
+      res = await fetch(`http://127.0.0.1:${port}/c/${SLUG}`).catch(() => undefined);
+      if (!res) await Bun.sleep(100);
+    }
+    expect(res!.status).toBe(500);
+    const body = await res!.text();
+    expect(leaks(body)).toBe(false);
+    expect(body.length).toBeLessThan(200);
+  } finally {
+    server.kill();
+    await server.exited;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 15_000);

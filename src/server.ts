@@ -55,6 +55,12 @@ webhook.recover();
 const server = Bun.serve({
   port: Number(process.env.PORT) || 3000,
   maxRequestBodySize: MAX_BODY_BYTES,
-  fetch: (req) => (req.method === "GET" && serveCatalogue(new URL(req.url).pathname, DATA_DIR)) || webhook.fetch(req),
+  // Never Bun's development error page, which shows source and the stack.
+  development: false,
+  error(e) {
+    console.error(`Request failed: ${e.message}`);
+    return new Response("Something went wrong.", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
+  },
+  fetch: (req) => ((req.method === "GET" || req.method === "HEAD") && serveCatalogue(new URL(req.url).pathname, DATA_DIR)) || webhook.fetch(req),
 });
 console.log(`StallSnap listening on port ${server.port}`);

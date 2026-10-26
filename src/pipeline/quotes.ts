@@ -24,7 +24,8 @@ const NUMBER_WORDS: Record<string, number> = {
 };
 const SCALES: Record<string, number> = { hundred: 100, thousand: 1000, tousand: 1000, million: 1_000_000 };
 const THOUSAND_WORDS = new Set(["k", "thousand", "tousand"]);
-const CORRECTIONS = new Set(["no", "sorry", "mean", "correction", "abeg", "wait"]);
+// Not "abeg": in Pidgin it is mostly "please" ("abeg buy"), so it can't mark a correction.
+const CORRECTIONS = new Set(["no", "sorry", "mean", "correction", "wait"]);
 const GROUP_WORDS = new Set(["all", "each", "every", "both"]);
 const RANGE_WORDS = new Set(["to", "or", "abi", "between"]);
 /** Words that describe packaging or size, not which product an item is. */
@@ -66,6 +67,8 @@ function digitValue(token: string, next: string | undefined): { value: number; c
   if (decimals === undefined) return { value: Number(whole) * (thousand ? 1000 : 1), consumed };
   if (!thousand && decimals.length === 3) return { value: Number(`${whole}${decimals}`), consumed }; // 1.500
   if (decimals.length > 2) return "unreadable";
+  // "650.50" is not 650,500: without k or "thousand", only a small whole part means thousands.
+  if (!thousand && Number(whole) >= 100) return "unreadable";
   // "1.8" said about naira prices means 1,800, as does "1.8k".
   return { value: Math.round(Number(`${whole}.${decimals}`) * 1000), consumed };
 }

@@ -66,8 +66,15 @@ export function serveCatalogue(pathname: string, dataDir: string): Response | un
     return new Response(Bun.file(join(dir, file)), { headers: { "content-type": "image/webp", "cache-control": "public, max-age=86400" } });
   }
   if (!existsSync(join(dir, "catalogue.json"))) return notFound();
-  const catalogue = JSON.parse(readFileSync(join(dir, "catalogue.json"), "utf8")) as Catalogue;
-  return new Response(renderCatalogue(catalogue, `/c/${slug}`), {
+  let html: string;
+  try {
+    html = renderCatalogue(JSON.parse(readFileSync(join(dir, "catalogue.json"), "utf8")) as Catalogue, `/c/${slug}`);
+  } catch (e) {
+    // A damaged file gets a plain message, never a stack trace or source.
+    console.error(`Catalogue ${slug} can't be read: ${e instanceof Error ? e.message : String(e)}`);
+    return new Response("This catalogue can't be shown right now.", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+  return new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; connect-src 'self'" },
   });
 }

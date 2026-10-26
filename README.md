@@ -104,18 +104,19 @@ bun src/pipeline/try-cutouts.ts stall.jpg
 
 ### Prices: ask, never guess
 
-`src/pipeline/pricing.ts` runs a Muse Spark tool loop over the item list and everything the trader said (voice transcripts and typed text). Spark can only call `set_price` or `flag_missing_price`, and every call is checked before it counts:
+`src/pipeline/pricing.ts` runs a Muse Spark tool loop over the item list and everything the trader said (voice transcripts and typed text). Spark can only call `set_price(item, price, unit, quote)` or `flag_missing_price(item)`. A price counts only when the quote verifier in `src/pipeline/quotes.ts` agrees, in code:
 
-| Check | Refused example |
+| Rule | Asked back instead of priced |
 |---|---|
-| The item is one of the cut-outs | item 3 on a two-item stall |
-| Whole naira from 10 to 5,000,000 | `650.50` (kobo), `-6000`, `"N/A"` |
-| A known sale unit | `per bag` |
-| The quote is the trader's own words, found in the transcript | a quote Spark made up |
-| If the quote has digits, the price matches one of them | 750 for "Peak milk na 650"; 600 for "6OO" |
-| The quote isn't a range or a choice | "two to two-five", "3k or 3,500" |
+| The quote is the trader's own words, as whole words in one message | a made-up quote; "3000" cut out of "30000" |
+| Code reads exactly one price from the quote, equal to Spark's | "rice dey" (no price), "N/A", "free", 650 read as 650,000, "1,5OO" (letter O), "1000-1200", "2k/2.5k", "500 each, 2000 for five" |
+| The quote sits in this item's part of the message, which names the item before the price | Rice's price used for Beans; "all the tins 800" for a bag of rice |
+| It is the trader's last word on the item | "3000... no, 3500" quoted as 3000; a later voice note with a new price |
+| No other item has the same name | two items both called "Tomato" |
 
-A refused call is answered with the reason, so Spark can fix it or ask. Any item still without a price at the end gets a question for the trader. Shorthand the trader really uses is accepted: `₦6,000`, `6k`, `1.8` for 1,800, `5-8` for 5,800, and prices in words. A later correction wins over an earlier price.
+Prices are read as traders say them: `650` is 650, `₦6,000` is 6,000, `3k` and `3 thousand` are 3,000, `1.8` is 1,800, `1.500` is 1,500, `5-8` is 5,800, and number words ("two thousand five hundred") work. "All the tins 800" prices every item sold by the tin.
+
+A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 
 The loop stops when every item is decided, when Spark answers in plain text, after 4 turns, or when the same call is made 3 times. History is replayed statelessly (`store: false`, encrypted reasoning).
 

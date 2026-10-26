@@ -49,7 +49,7 @@ Check today's spend with `bun src/spend-guard.ts`.
 | `POST /webhook` | Checks `X-Hub-Signature-256` against `APP_SECRET` on the raw body (401 if wrong), drops numbers not in `ALLOWED_NUMBERS`, records each new message id, then answers 200 and handles the messages afterwards |
 | `GET /health` | Answers `ok` |
 
-`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 7700 900123, 2348031234567`. A local number such as `07700900123`, or anything that isn't a phone number, stops start-up.
+`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 (0)7700 900123, 2348031234567`. A `(0)` trunk prefix and invisible marks copied from phone contacts are removed. A local number such as `07700900123`, a 0 straight after +44 or +234, or anything that isn't a phone number stops start-up, and the error names the entry by its position and last 4 digits only.
 
 Voice notes are accepted whether Meta sends them as type `voice` or as `audio` with `voice: true`.
 
@@ -59,7 +59,10 @@ Voice notes are accepted whether Meta sends them as type `voice` or as `audio` w
 
 - **Dedupe.** Meta retries webhooks for up to 7 days. A message id seen before is dropped, also after a restart.
 - **Nothing lost.** A message is recorded before the 200 goes back. One a crash left unhandled is handled again at start-up.
-- **No double paid calls.** Each paid step of a job is recorded as started before the call and done after. A finished step returns its saved result without calling again. A step a crash cut off is never rerun, because Meta may have billed it, so that job fails cleanly instead.
+- **No double paid calls.** Each paid step of a job is recorded as started before the call and done after. A finished step returns its saved result without calling again. A step a crash cut off is never rerun, because Meta may have billed it: the job log marks that job failed itself, so no job can be left open.
+- **Damage stops start-up.** A line that isn't one of the entries the log writes stops start-up rather than being guessed at; only a last line cut short by a crash is trimmed.
+
+Run one server process per `.data/` folder, and keep `.data/` on a persistent volume: a wiped disk loses the dedupe record, and Meta's retries would be handled again.
 
 The log holds traders' numbers and messages, so `.data/` is kept out of git.
 

@@ -1,7 +1,7 @@
 // Starts the StallSnap server: `bun src/server.ts`.
 import { JobLog } from "./joblog.ts";
 import { loadWebhookConfig } from "./whatsapp/config.ts";
-import { createWebhook } from "./whatsapp/webhook.ts";
+import { MAX_BODY_BYTES, createWebhook } from "./whatsapp/webhook.ts";
 
 const config = loadWebhookConfig();
 const log = new JobLog(".data/joblog.jsonl");
@@ -17,5 +17,6 @@ const webhook = createWebhook({
 });
 
 webhook.recover();
-const server = Bun.serve({ port: Number(process.env.PORT) || 3000, fetch: webhook.fetch });
+// Bodies over the limit are refused at the socket, before they are read.
+const server = Bun.serve({ port: Number(process.env.PORT) || 3000, maxRequestBodySize: MAX_BODY_BYTES, fetch: webhook.fetch });
 console.log(`StallSnap listening on port ${server.port}`);

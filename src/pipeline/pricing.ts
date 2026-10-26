@@ -106,6 +106,10 @@ const normalise = (s: string) =>
 /** Prices a quote's digits could mean: 650 -> 650 or 650,000; 1.8 -> 1,800; 3k -> 3,000; 5-8 -> 5,800. */
 export function quotePrices(quote: string): number[] | undefined {
   const text = normalise(quote);
+  // A number with letters mixed in ("6O00", "1l500") can't be read safely: no price matches it.
+  for (const word of text.split(" ")) {
+    if (/\d/.test(word) && /\p{L}/u.test(word) && !/^n?\d+(?:\.\d+)?k?$/.test(word)) return [];
+  }
   const tokens = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(k|thousand)?/g)];
   if (tokens.length === 0) return undefined;
   const out = new Set<number>();

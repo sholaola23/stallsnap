@@ -49,7 +49,11 @@ Check today's spend with `bun src/spend-guard.ts`.
 
 `ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 7700 900123, 2348031234567`. A local number such as `07700900123`, or anything that isn't a phone number, stops start-up.
 
-Voice notes are accepted whether Meta sends them as type `voice` or as `audio` with `voice: true`.
+Voice notes arrive as type `audio` with `voice: true` (Meta's audio webhook reference). Type `voice` is accepted too.
+
+### Sending
+
+`src/whatsapp/graph.ts` sends through the Graph API v26.0 with `WHATSAPP_ACCESS_TOKEN` (a system-user token) and `WHATSAPP_PHONE_NUMBER_ID`: plain text, a message with one reply button, a message with one link button, and the "typing..." indicator. It keeps messages to one person 6 seconds apart (WhatsApp's pair rate limit) and retries rate limits, Meta server errors and network failures after 1, 4 and 16 seconds. It downloads photos and voice notes by media id, checking type, size and hash, and fetches a fresh URL once if the 5-minute URL has expired.
 
 ### Crash safety
 

@@ -25,3 +25,4 @@ Dated record of what was built in this repo. All times are UK time. Everything h
 | Mon 26 Oct | CI: the ffmpeg install skips the man-db rebuild, waits for a busy dpkg lock and times out slow mirrors, after a second silent six-minute hang. |
 | Mon 26 Oct | PR 4b, QA round 2 fix: other items of a product already cut out can no longer come back through the missed-products step. The prompt says every item of a listed product is done; box review names any crop that is a kept product (`same_as`) and it is dropped; a box with a kept or repeated name is dropped too. |
 | Mon 26 Oct | PR 4c, QA round 2 fixes: a decimal with a whole part of 100 or more ("650.50") is unreadable unless k or "thousand" follows; "abeg" no longer counts as a correction word, since in Pidgin it mostly means "please". |
+| Mon 26 Oct | PR 4b: the pixel-limit test patches a small JPEG's header instead of encoding a real 100-megapixel photo, which took 5 s and sometimes hit the test time limit. |

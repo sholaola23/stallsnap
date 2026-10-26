@@ -126,8 +126,10 @@ export class MetaClient {
         break;
       } catch (e) {
         if (!(e instanceof MetaApiError) || !RETRYABLE.has(e.status) || attempt >= MAX_ATTEMPTS) throw e;
+        // Meta says to wait at least Retry-After. Longer than we are willing to wait means give up now.
+        if ((e.retryAfterMs ?? 0) > MAX_RETRY_WAIT_MS) throw e;
         const backoff = 500 * 2 ** (attempt - 1) + Math.random() * 250;
-        await this.#o.sleep(Math.min(MAX_RETRY_WAIT_MS, Math.max(backoff, e.retryAfterMs ?? 0)));
+        await this.#o.sleep(Math.max(backoff, e.retryAfterMs ?? 0));
       }
     }
     if (file) {
@@ -140,7 +142,13 @@ export class MetaClient {
 }
 
 async function readJson(res: Response): Promise<unknown> {
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    // The body stalled past the timeout or the connection dropped mid-body.
+    throw new MetaApiError(0, `response body not read: ${e instanceof Error ? e.name : String(e)}`);
+  }
   if (!res.ok) throw new MetaApiError(res.status, text.slice(0, 500));
   let body: unknown;
   try {

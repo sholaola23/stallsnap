@@ -74,14 +74,35 @@ describe("retries", () => {
     });
   }
 
-  test("a long Retry-After is capped at 30 s", async () => {
+  // QA round 2 on PR #4: never retry sooner than Meta's Retry-After allows.
+  test("a Retry-After over 30 s is not retried early: the call fails at once", async () => {
     const f = scripted([status(429, { "retry-after": "3600" }), ok]);
+    await expect(f.client.responses(call, {}, () => 0)).rejects.toMatchObject({ status: 429 });
+    expect(f.count()).toBe(1);
+    expect(f.waits).toEqual([]);
+  });
+
+  test("a Retry-After of exactly 30 s is waited in full", async () => {
+    const f = scripted([status(429, { "retry-after": "30" }), ok]);
     await f.client.responses(call, {}, () => 0);
-    expect(f.waits[0]!).toBeLessThanOrEqual(30_000);
+    expect(f.waits[0]!).toBeGreaterThanOrEqual(30_000);
   });
 });
 
 describe("timeouts", () => {
+  // QA round 2 on PR #4 (optional, taken): a body that stalls after the headers is a MetaApiError, so it is retried like any timeout.
+  test("a body that fails after the headers becomes MetaApiError status 0 and is retried", async () => {
+    const stalled = () =>
+      new Response(new ReadableStream({ pull: (c) => c.error(Object.assign(new Error("body timed out"), { name: "TimeoutError" })) }));
+    const f = scripted([stalled, ok]);
+    expect(await f.client.responses(call, {}, () => 0)).toMatchObject({ transcript: "rice na 6k" });
+    expect(f.count()).toBe(2);
+    const g = scripted([stalled]);
+    const err = await g.client.responses(call, {}, () => 0).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
+    expect((err as MetaApiError).status).toBe(0);
+  });
+
   test("a request that never answers times out, its reservation settles, and the next call isn't blocked", async () => {
     const f = scripted([() => new Promise<Response>(() => {})], { timeoutMs: 20 });
     const err = await f.client.responses({ ...call, maxUsd: 0.6 }, {}, () => 0).catch((e: unknown) => e);

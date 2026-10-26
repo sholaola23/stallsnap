@@ -39,10 +39,10 @@ const PLACEHOLDER_PATTERNS = [
   /^\*+$/, // ***
   /^\.+$/, // ...
   /^<.*>$/, // <your key>
-  /^\$\{?[a-z0-9_]+\}?$/, // $MODEL_API_KEY, ${MODEL_API_KEY}
+  /^\$\{?[a-z][a-z0-9]*(_[a-z0-9]+)+\}?$/, // $MODEL_API_KEY, ${MODEL_API_KEY}, not $abc123
   /^change[-_ ]?me$/, // change-me, change_me
-  /^(your|my|insert|enter|put|add)[-_ ]/, // your-api-key, insert-key-here
-  /[-_ ]here$/, // key_here
+  /^(your|my|insert|enter|put|add)[-_ ](the[-_ ])?((api|access|app|verify|phone)[-_ ])?(key|token|secret|number|id|url|value)([-_ ]|$)/, // your-api-key, insert-key-here
+  /(key|token|secret|number|id|url|value)[-_ ]?here$/, // key_here
   /^[a-z0-9_-]{1,8}\.{2,}$/, // sk-..., EAAG...
 ];
 

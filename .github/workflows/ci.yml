@@ -18,13 +18,16 @@ jobs:
         with:
           bun-version: 1.4.4
       - name: Install ffmpeg (voice note conversion)
-        timeout-minutes: 6
+        timeout-minutes: 10
         run: |
-          # apt mirrors sometimes hang: try the runner's existing package lists
-          # first, refresh them only if needed, and give each attempt a time limit.
+          # Past hangs gave no output: skip the slow man-db rebuild, wait for a
+          # busy dpkg lock instead of stalling, time out slow mirrors, and give
+          # each attempt a limit. Refresh the package lists only if needed.
+          sudo rm -f /var/lib/man-db/auto-update
+          APT="-o DPkg::Lock::Timeout=60 -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
           for attempt in 1 2 3; do
-            if timeout 120 sudo apt-get install -y -qq --no-install-recommends ffmpeg; then break; fi
-            timeout 120 sudo apt-get update -qq || true
+            if timeout 150 sudo apt-get $APT install -y -qq --no-install-recommends ffmpeg; then break; fi
+            timeout 120 sudo apt-get $APT update -qq || true
             [ "$attempt" = 3 ] && exit 1
           done
           ffmpeg -hide_banner -encoders | grep -q libopus

@@ -70,10 +70,13 @@ Voice notes arrive as type `audio` with `voice: true` (Meta's audio webhook refe
 | (Some items have no price) | One message listing those items with a question each. Nothing is guessed |
 | A voice note or text answering | **One** priced list with **one** "Yes, publish" button. Items still without a price say "ask for price" |
 | A change, such as "2 na 150" | A new list with a new button. The old button no longer publishes |
-| "Yes, publish" (or a typed yes) | The catalogue link, as an "Open catalogue" button and as text to forward |
-| A new photo at any point after the list | A new catalogue |
+| "Yes, publish" (or a typed yes such as "yes please", "ok o", "confirm" or 👍 in any skin tone) | The catalogue link, as an "Open catalogue" button and as text to forward |
+| A reaction on the list | "To put it online, tap Yes, publish on the list." |
+| A new photo at any point after the list | A new catalogue. The old list's button then gets "That list is from your old photo..." |
 
 A photo or voice note StallSnap can't use (unreadable, too big, no speech) is dropped and the trader is asked to send it again; the rest of the job is kept. The spend cap pauses StallSnap and ends the job. Anything else that breaks ends the job, and the trader is asked to start again.
+
+After a crash, the message that started the cut-off work is replayed once and gets one answer: a list whose text went out but whose button didn't gets only the button, and a publish that was cut off sends the link once. A message older than 23 hours (Meta retries for days) starts no paid work, since the reply window has probably closed.
 
 After a restart, a job that was working carries on: finished paid steps come back from the job log for free, and a paid step that was cut off ends the job cleanly. A message whose handling was cut off is handled again, and whatever it last sent goes again.
 

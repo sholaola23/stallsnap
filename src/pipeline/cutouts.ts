@@ -106,9 +106,20 @@ async function reviewCrop(photo: Photo, m: Mask): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-/** Spark's verdict per candidate. A candidate with no clear verdict counts as rejected. */
-export async function reviewCandidates(client: MetaClient, jobId: string, photo: Photo, candidates: readonly Candidate[]): Promise<Candidate[]> {
+/**
+ * Spark's verdict per candidate. A candidate with no clear verdict counts as rejected.
+ * With `known` (products already cut out), a crop Spark says is one of them is rejected too.
+ */
+export async function reviewCandidates(
+  client: MetaClient,
+  jobId: string,
+  photo: Photo,
+  candidates: readonly Candidate[],
+  known: readonly string[] = [],
+): Promise<Candidate[]> {
   const kept: Candidate[] = [];
+  const verdictProps: Record<string, unknown> = { crop: { type: "integer" }, sellable: { type: "boolean" }, name: { type: "string" } };
+  if (known.length > 0) verdictProps.same_as = { type: "integer" };
   for (let start = 0; start < candidates.length; start += REVIEW_BATCH) {
     const batch = candidates.slice(start, start + REVIEW_BATCH);
     const user: UserPart[] = [];
@@ -127,6 +138,12 @@ export async function reviewCandidates(client: MetaClient, jobId: string, photo:
         "Reject people, hands, tables, the stall, signs, price tags, empty background, a small part of a product, and crops mixing different products.",
         "For an accepted crop give a short catalogue name for what you see; for a rejected crop give an empty name.",
         "Give exactly one verdict per crop, using its crop number.",
+        ...(known.length > 0
+          ? [
+              `These products are already in the catalogue: ${known.map((n, i) => `${i + 1}. ${n}`).join("; ")}.`,
+              "If a crop shows one of them (another item, pack or angle of the same product), set same_as to its number; otherwise set same_as to 0.",
+            ]
+          : []),
       ].join(" "),
       user,
       schema: {
@@ -139,8 +156,8 @@ export async function reviewCandidates(client: MetaClient, jobId: string, photo:
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["crop", "sellable", "name"],
-              properties: { crop: { type: "integer" }, sellable: { type: "boolean" }, name: { type: "string" } },
+              required: Object.keys(verdictProps),
+              properties: verdictProps,
             },
           },
         },
@@ -154,7 +171,9 @@ export async function reviewCandidates(client: MetaClient, jobId: string, photo:
       if (typeof crop !== "number" || !Number.isInteger(crop) || crop < 1 || crop > batch.length) continue;
       const sellable = v.sellable;
       // Two verdicts for one crop that disagree count as no verdict.
-      const next = typeof sellable === "boolean" ? { sellable, name: str(v.name).slice(0, 60) } : null;
+      // A product already in the catalogue counts as rejected; with `known`, a missing same_as does too.
+      const repeat = known.length > 0 && v.same_as !== 0;
+      const next = typeof sellable === "boolean" ? { sellable: sellable && !repeat, name: str(v.name).slice(0, 60) } : null;
       const prev = verdicts.get(crop);
       verdicts.set(crop, prev === undefined ? next : prev && next && prev.sellable === next.sellable ? prev : null);
     }
@@ -179,7 +198,9 @@ export async function findMissed(client: MetaClient, jobId: string, photo: Photo
     developer: [
       "A market stall photo and the boxes of products already cut out are given. Coordinates are on a 0 to 1000 grid:",
       "x from the left edge, y from the top edge.",
-      `List sellable products you can clearly see that no listed box covers, at most ${MAX_BOXES}, each with a short name and a tight box.`,
+      "Each listed product is done, including every other item, pack or heap of that same product anywhere in the photo.",
+      `List only different sellable products you can clearly see that no listed box covers, at most ${MAX_BOXES}, each with a short name and a tight box.`,
+      "List each different product once, even if there are many of it.",
       "Ignore people, tables, the stall, signs and price tags. If nothing was missed, return an empty list. Never guess.",
     ].join(" "),
     user: [
@@ -296,11 +317,20 @@ export async function findProducts(client: MetaClient, jobId: string, photo: Pho
       people,
       photo,
     ).filter((m) => m.name && kept.every((k) => overlap(k, m) <= 0.3 * Math.min(k.area, m.area)));
-    for (const m of await reviewCandidates(client, jobId, photo, fromBoxes)) cutouts.push({ name: m.name, mask: m, source: "box" });
+    // A box Spark reviews as a product already kept is dropped, and so is a second box with a kept or repeated name.
+    const names = new Set(kept.map((k) => sameName(k.name)));
+    for (const m of await reviewCandidates(client, jobId, photo, fromBoxes, kept.map((k) => k.name))) {
+      if (names.has(sameName(m.name))) continue;
+      names.add(sameName(m.name));
+      cutouts.push({ name: m.name, mask: m, source: "box" });
+    }
   }
 
   return cutouts.sort((a, b) => a.mask.top - b.mask.top || a.mask.left - b.mask.left);
 }
+
+/** A product name reduced for comparison: "Tomato Tins" and "tomato tin" match. */
+const sameName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/(\w{3,})s\b/g, "$1");
 
 /** A transparent PNG of one product, cut from the photo's own pixels with its mask. */
 export async function cutoutPng(photo: Photo, mask: Mask): Promise<Uint8Array> {

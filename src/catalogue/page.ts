@@ -26,8 +26,9 @@ export function renderCatalogue(c: Catalogue, base: string): string {
   const date = Number.isNaN(updated.getTime()) ? "" : updated.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
   const cards = c.items
     .map(
+      // The heading below names the item, so the picture's alt text is empty rather than read twice.
       (item, i) => `      <li class="item">
-        <img src="${escape(`${base}/${item.image}`)}" alt="${escape(item.name)}" width="${item.width}" height="${item.height}"${i >= 4 ? ' loading="lazy"' : ""} decoding="async">
+        <img src="${escape(`${base}/${item.image}`)}" alt="" width="${item.width}" height="${item.height}"${i >= 4 ? ' loading="lazy"' : ""} decoding="async">
         <h2>${escape(item.name)}</h2>
         <p class="${item.naira === null ? "price ask" : "price"}">${escape(priceText(item))}</p>
       </li>`,

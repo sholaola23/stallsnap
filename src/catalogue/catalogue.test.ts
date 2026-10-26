@@ -106,11 +106,12 @@ describe("page", () => {
     expect(priceText({ naira: null, unit: null })).toBe("Ask for price");
   });
 
-  test("images after the fourth load lazily; every image has alt text and a size", () => {
+  test("images after the fourth load lazily; every image has empty alt text (its heading names it) and a size", () => {
     const items = Array.from({ length: 6 }, (_, i) => ({ name: `Item ${i}`, naira: 100, unit: "piece", image: `item-${i + 1}.webp`, width: 480, height: 320 }));
     const html = renderCatalogue({ title: CATALOGUE_TITLE, items, updatedAt: "2026-10-26T12:00:00Z" }, "/c/x");
     expect((html.match(/loading="lazy"/g) ?? []).length).toBe(2);
-    expect((html.match(/<img [^>]*alt="Item \d" width="480" height="320"/g) ?? []).length).toBe(6);
+    expect((html.match(/<img [^>]*alt="" width="480" height="320"/g) ?? []).length).toBe(6);
+    expect((html.match(/<h2>Item \d<\/h2>/g) ?? []).length).toBe(6);
     expect(html).toContain("Prices from 26 October 2026");
     expect(html).toContain('lang="en-GB"');
   });

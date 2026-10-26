@@ -31,6 +31,9 @@ async function one(call: ScriptedCall, said: string) {
 describe("refused, so the trader is asked instead", () => {
   const cases: [string, ScriptedCall, string][] = [
     ["letter O for zero", setPrice(1, 600, "paint bucket", "rice na 6OO"), "rice na 6OO"],
+    ["letter O inside a number", setPrice(1, 6000, "bag", "rice na 6O00"), "rice na 6O00"],
+    ["letter l for one", setPrice(1, 1500, "bag", "rice na l500"), "rice na l500"],
+    ["letter S for five", setPrice(1, 500, "bag", "rice na S00"), "rice na S00"],
     ["kobo", setPrice(1, 650, "bag", "rice na 650.50"), "rice na 650.50"],
     ["N/A as the price", { name: "set_price", args: { item: 1, price_naira: "N/A", unit: "bag", quote: "rice na N/A" } }, "rice na N/A"],
     ["price as text digits", { name: "set_price", args: { item: 1, price_naira: "6000", unit: "bag", quote: "rice na 6000" } }, "rice na 6000"],

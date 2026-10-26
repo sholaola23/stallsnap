@@ -34,7 +34,7 @@ test("prices what the trader said, asks about the rest, and stops as soon as eve
   expect(r.lines).toEqual([
     { item: 1, name: "Peak milk tin", price: { naira: 650, unit: "tin", quote: "Peak milk na 650" }, question: null },
     { item: 2, name: "Milo sachet", price: { naira: 100, unit: "sachet", quote: "the sachet na 100" }, question: null },
-    { item: 3, name: "Indomie pack", price: null, question: "How much is one pack of Indomie?" },
+    { item: 3, name: "Indomie pack", price: null, question: "How much is Indomie pack?" },
   ]);
   expect(spark.calls).toHaveLength(1);
   expect(guard.callsForJob("job1")).toBe(1);
@@ -47,7 +47,7 @@ describe("never guesses", () => {
     expect(r.events[0]).toMatchObject({ accepted: false, reason: "quote must be the trader's exact words from the transcript" });
     const turn2 = (spark.calls[1]!.body as { input: { type: string; output?: string }[] }).input;
     expect(turn2.find((i) => i.type === "function_call_output")!.output).toContain("exact words");
-    expect(r.lines[2]).toMatchObject({ price: null, question: "How much is Indomie?" });
+    expect(r.lines[2]).toMatchObject({ price: null, question: "How much is Indomie pack?" });
   });
 
   test("a price that doesn't match the number in a real quote is refused", async () => {

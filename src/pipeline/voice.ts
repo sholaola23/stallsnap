@@ -14,7 +14,10 @@ import type { MetaClient } from "../meta/client.ts";
 import { VOICE_MODEL, voiceUsd } from "../meta/costs.ts";
 
 export const MAX_VOICE_MS = 10 * 60 * 1000;
-export const PRICE_KEYWORDS = ["naira", "₦", "kobo", "thousand", "hundred"];
+/** WhatsApp's own cap for audio. Anything bigger is refused before decoding. */
+export const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
+const FFMPEG_TIMEOUT_MS = 60_000;
+export const PRICE_KEYWORDS = ["naira", "₦", "kobo", "thousand", "tousand", "hundred"];
 const MAX_KEYWORDS = 40;
 
 export class VoiceNoteError extends Error {
@@ -31,16 +34,22 @@ export type Wav = { bytes: Uint8Array; durationMs: number };
 
 /** Converts any audio ffmpeg can read to mono 16-bit 24 kHz WAV. */
 export async function toWav(audio: Uint8Array): Promise<Wav> {
+  if (audio.byteLength > MAX_AUDIO_BYTES) throw new VoiceNoteError("too-long", "The voice note file is too big");
   const dir = mkdtempSync(join(tmpdir(), "voice-"));
   try {
     const input = join(dir, "in");
     const output = join(dir, "out.wav");
     writeFileSync(input, audio);
+    // -t 601 stops decoding just past 10 minutes, so a 2-hour note never fills
+    // memory; the duration check below still sees it as too long.
     const proc = Bun.spawn(
-      ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", input, "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", "-map_metadata", "-1", "-f", "wav", output],
-      { stdout: "ignore", stderr: "pipe" },
+      ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", input, "-t", "601", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", "-map_metadata", "-1", "-f", "wav", output],
+      { stdout: "ignore", stderr: "ignore" },
     );
-    if ((await proc.exited) !== 0) {
+    const killer = setTimeout(() => proc.kill(), FFMPEG_TIMEOUT_MS);
+    const code = await proc.exited;
+    clearTimeout(killer);
+    if (code !== 0) {
       throw new VoiceNoteError("unreadable", "That voice note couldn't be read");
     }
     const bytes = new Uint8Array(readFileSync(output));

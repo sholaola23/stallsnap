@@ -16,7 +16,7 @@ import { loadWebhookConfig } from "./whatsapp/config.ts";
 import { Conversation } from "./whatsapp/conversation.ts";
 import { GraphClient } from "./whatsapp/graph.ts";
 import type { Handler } from "./whatsapp/webhook.ts";
-import { createWebhook } from "./whatsapp/webhook.ts";
+import { MAX_BODY_BYTES, createWebhook } from "./whatsapp/webhook.ts";
 import { SessionStore } from "./whatsapp/sessions.ts";
 
 const DATA_DIR = ".data";
@@ -51,8 +51,10 @@ if (missing.length === 0) {
 const webhook = createWebhook({ config, log, handle });
 webhook.recover();
 
+// Bodies over the limit are refused at the socket, before they are read.
 const server = Bun.serve({
   port: Number(process.env.PORT) || 3000,
+  maxRequestBodySize: MAX_BODY_BYTES,
   fetch: (req) => (req.method === "GET" && serveCatalogue(new URL(req.url).pathname, DATA_DIR)) || webhook.fetch(req),
 });
 console.log(`StallSnap listening on port ${server.port}`);

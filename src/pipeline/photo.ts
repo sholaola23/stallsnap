@@ -15,10 +15,24 @@ export class PhotoError extends Error {
 
 export type Photo = { jpeg: Uint8Array; width: number; height: number };
 
+export const MAX_INPUT_PIXELS = 100_000_000;
+
 export async function preparePhoto(bytes: Uint8Array): Promise<Photo> {
+  // The header gives the size without decoding, so a huge photo gets a reason the trader can act on.
+  let size = 0;
+  try {
+    const m = await sharp(bytes).metadata();
+    size = (m.width ?? 0) * (m.height ?? 0);
+  } catch {
+    // unreadable: the decode below gives the trader message
+  }
+  if (size > MAX_INPUT_PIXELS) {
+    throw new PhotoError("That photo is too large. Please send it as a normal WhatsApp photo, not as a document.");
+  }
   let out: { data: Buffer; info: OutputInfo };
   try {
-    out = await sharp(bytes, { failOn: "error", limitInputPixels: 100_000_000 })
+    // failOn "warning": a JPEG with corrupt data is refused, not cut out as garbled pixels.
+    out = await sharp(bytes, { failOn: "warning", limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
       .resize({ width: MAX_SIDE, height: MAX_SIDE, fit: "inside", withoutEnlargement: true })
       .flatten({ background: "#ffffff" })

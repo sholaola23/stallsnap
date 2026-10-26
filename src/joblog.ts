@@ -164,7 +164,10 @@ export class JobLog {
         this.#write({ t: "done", jobId, key, value: value === undefined ? null : value });
         return value;
       } catch (e) {
-        this.#write({ t: "error", jobId, key, message: e instanceof Error ? e.message : String(e) });
+        const message = e instanceof Error ? e.message : String(e);
+        this.#write({ t: "error", jobId, key, message });
+        // The step can't be retried, so its job is over: fail it here too.
+        this.failJob(jobId, `step ${key} failed: ${message}`);
         throw e;
       } finally {
         this.#running.delete(id);

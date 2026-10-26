@@ -77,6 +77,23 @@ After a restart, a job that was working carries on: finished paid steps come bac
 
 Limits per job: one photo, 10 voice notes or texts, 5 changes after the list.
 
+### The catalogue page
+
+When the trader taps Yes, publish, `src/catalogue/publish.ts` writes their confirmed list and cut-outs to `.data/public/<slug>/` and the server shows it at `/c/<slug>`. The page is titled "StallSnap Demo Stall".
+
+- The slug is 16 random characters, so the link doesn't reveal the trader's number and can't be guessed.
+- Prices show as "₦6,000 per bag". An item without a price says "Ask for price", never a number.
+- Pictures are the trader's own cut-outs, as 480 px WebP with transparency.
+- Plain HTML with no JavaScript, a strict Content-Security-Policy, light and dark themes, and every name escaped.
+
+To check the page: `bun scripts/check-page.ts` publishes a sample (plain coloured shapes, not real products), takes screenshots at 375 and 1280 px, checks for sideways scroll at 320, 375, 768 and 1280 px, and runs axe. It needs Playwright with Chromium. The latest results are in `docs/qa/catalogue-page/`.
+
+### Running the server
+
+`bun src/server.ts` needs `APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` and `ALLOWED_NUMBERS`. To reply to traders it also needs `MODEL_API_KEY`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and `PUBLIC_BASE_URL` (https). Without those it still answers Meta's handshake and serves catalogues, and it logs which settings are missing instead of replying.
+
+It is one long-running process that keeps state in `.data/`, so it needs a host that keeps a process running, with a persistent volume for `.data/`. Railway fits. Deploying to a public address needs Shola's yes.
+
 ### Crash safety
 
 `src/joblog.ts` keeps an append-only log in `.data/joblog.jsonl`, synced to disk after every write:

@@ -1,0 +1,9 @@
+Page: /c/dcfin75ybaecqlxe
+320px light: sideways scroll 0px; axe 0 violations, 24 rules passed
+320px dark: sideways scroll 0px; axe 0 violations, 24 rules passed
+375px light: sideways scroll 0px; axe 0 violations, 24 rules passed
+375px dark: sideways scroll 0px; axe 0 violations, 24 rules passed
+768px light: sideways scroll 0px; axe 0 violations, 24 rules passed
+768px dark: sideways scroll 0px; axe 0 violations, 24 rules passed
+1280px light: sideways scroll 0px; axe 0 violations, 24 rules passed
+1280px dark: sideways scroll 0px; axe 0 violations, 24 rules passed

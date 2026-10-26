@@ -9,6 +9,7 @@ export const ENV_NAMES = [
   "ALLOWED_NUMBERS",
   "STALLSNAP_PAID_CALLS",
   "PORT",
+  "PUBLIC_BASE_URL",
 ] as const;
 
 export type EnvName = (typeof ENV_NAMES)[number];

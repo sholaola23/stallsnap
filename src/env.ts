@@ -8,6 +8,7 @@ export const ENV_NAMES = [
   "WHATSAPP_PHONE_NUMBER_ID",
   "ALLOWED_NUMBERS",
   "STALLSNAP_PAID_CALLS",
+  "PORT",
 ] as const;
 
 export type EnvName = (typeof ENV_NAMES)[number];

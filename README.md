@@ -37,6 +37,30 @@ Each call states its worst-case cost. That amount is held before the call starts
 
 Check today's spend with `bun src/spend-guard.ts`.
 
+## WhatsApp webhook
+
+`bun src/server.ts` starts the server. It needs `APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` and `ALLOWED_NUMBERS` and refuses to start without them. `WHATSAPP_PHONE_NUMBER_ID` is optional; when set, messages to any other business number are dropped.
+
+| Route | What it does |
+|---|---|
+| `GET /webhook` | Meta's verify handshake: echoes `hub.challenge` (digits only) when `hub.verify_token` matches |
+| `POST /webhook` | Checks `X-Hub-Signature-256` against `APP_SECRET` on the raw body (401 if wrong), drops numbers not in `ALLOWED_NUMBERS`, records each new message id, then answers 200 and handles the messages afterwards |
+| `GET /health` | Answers `ok` |
+
+`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 7700 900123, 2348031234567`. A local number such as `07700900123`, or anything that isn't a phone number, stops start-up.
+
+Voice notes are accepted whether Meta sends them as type `voice` or as `audio` with `voice: true`.
+
+### Crash safety
+
+`src/joblog.ts` keeps an append-only log in `.data/joblog.jsonl`, synced to disk after every write:
+
+- **Dedupe.** Meta retries webhooks for up to 7 days. A message id seen before is dropped, also after a restart.
+- **Nothing lost.** A message is recorded before the 200 goes back. One a crash left unhandled is handled again at start-up.
+- **No double paid calls.** Each paid step of a job is recorded as started before the call and done after. A finished step returns its saved result without calling again. A step a crash cut off is never rerun, because Meta may have billed it, so that job fails cleanly instead.
+
+The log holds traders' numbers and messages, so `.data/` is kept out of git.
+
 ## Build log
 
 See [docs/build-log.md](docs/build-log.md).

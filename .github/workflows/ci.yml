@@ -43,6 +43,8 @@ jobs:
           for attempt in 1 2 3; do
             if timeout 150 sudo apt-get $APT install -y --no-install-recommends ffmpeg; then break; fi
             [ "$attempt" = 3 ] && exit 1
+            # Noble runners read their mirrors from apt-mirrors.txt; older images from the sources files.
+            if [ -f /etc/apt/apt-mirrors.txt ]; then echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null; fi
             sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
             timeout 120 sudo apt-get $APT update || true
           done

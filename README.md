@@ -86,12 +86,15 @@ ffmpeg must be installed to run the server and the tests.
 
 1. The photo is turned upright (EXIF) and shrunk to at most 1600 px.
 2. Muse Spark proposes up to 12 products, each with two short phrasings, plus one broad phrase for the stall's goods. Phrasings with lists, negation or position words are dropped, because SAM 3.1 can't use them.
-3. SAM 3.1 segments each phrasing, and "person" once. Masks under 0.5 confidence are dropped, as are masks lying mostly on a person. Overlapping masks are deduped by confidence (more than 30% of the smaller mask means a duplicate).
-4. Muse Spark reviews a zoomed crop of each mask and keeps only sellable products. A crop without a clear verdict is dropped.
-5. Muse Spark boxes any product nothing caught, and SAM 3.1 segments those boxes in one request (at most 16).
-6. Each product is cut from the trader's own pixels with its mask. Nothing is generated.
+3. SAM 3.1 segments each phrasing, and "person" once. Masks under 0.5 confidence are dropped, as are masks covering more than 40% of the photo (a table or the whole stall), masks lying mostly on a person, and duplicates (more than 30% of the smaller mask). If one SAM call fails, no new ones start.
+4. Each proposed product keeps only its most confident instance, so 40 tins or a heap of tomatoes give one cut-out. At most 6 extra items from the broad phrase are kept.
+5. Muse Spark reviews a zoomed crop of each candidate and keeps only sellable products with a name. A crop without a clear verdict is dropped.
+6. Muse Spark boxes any product nothing caught, and SAM 3.1 segments those boxes in one request (at most 16). Those masks get every check above, including review, so a box over the trader's shirt can't become a product.
+7. Each product is cut from the trader's own pixels with its mask. Nothing is generated.
 
-One photo costs about 20 to 30 paid calls, so a job takes one stall photo, within the 60-call limit.
+A photo with corrupt data, or one too large to open (over 100 megapixels), is refused with a message the trader can act on.
+
+Whatever the photo holds, one photo costs at most 35 paid calls, so a job takes one stall photo and stays within the 60-call limit.
 
 To try it on a real photo (needs `MODEL_API_KEY`; responses are cached in `.cache/`):
 

@@ -19,6 +19,10 @@ import type { Photo } from "./photo.ts";
 import { MAX_BOXES, segmentBoxes, segmentPhrase, type Mask } from "./sam.ts";
 
 export const MAX_PRODUCTS = 12;
+/** Extra cut-outs from the broad phrase, beyond the proposed products. */
+export const MAX_BROAD_EXTRAS = 6;
+/** A mask covering more than this share of the photo is a table or the whole stall, not a product. */
+export const MAX_MASK_SHARE = 0.4;
 const REVIEW_BATCH = 8;
 const SAM_PARALLEL = 4;
 
@@ -30,7 +34,8 @@ export type Cutout = {
 };
 
 type Proposal = { name: string; phrases: string[] };
-type Candidate = Mask & { name: string };
+/** A mask with the name it would get. `product` is the proposal it came from; broad-phrase and box masks have none. */
+type Candidate = Mask & { name: string; product?: number };
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 /** Model output is untrusted: anything that isn't an object reads as an empty one. */
@@ -155,7 +160,9 @@ export async function reviewCandidates(client: MetaClient, jobId: string, photo:
     }
     for (const [i, c] of batch.entries()) {
       const v = verdicts.get(i + 1);
-      if (v?.sellable) kept.push({ ...c, name: v.name || c.name });
+      // An accepted crop needs a name: from review, or the one it was found under. Broad-phrase crops have none of their own.
+      const name = v?.name || c.name;
+      if (v?.sellable && name) kept.push({ ...c, name });
     }
   }
   return kept;
@@ -210,43 +217,86 @@ export async function findMissed(client: MetaClient, jobId: string, photo: Photo
   return boxes;
 }
 
+/** Runs `fn` over `items`, `limit` at a time. After one fails, no new item starts. */
 async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
+  let failed = false;
   await Promise.all(
     Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
+      while (next < items.length && !failed) {
         const i = next++;
-        out[i] = await fn(items[i]!);
+        try {
+          out[i] = await fn(items[i]!);
+        } catch (e) {
+          failed = true;
+          throw e;
+        }
       }
     }),
   );
   return out;
 }
 
-/** Runs steps 1 to 5. The result is in reading order: top to bottom, then left to right. */
+/** People, oversized masks (tables, the whole stall) and duplicates removed. */
+function usable<T extends Mask>(masks: readonly T[], people: readonly Mask[], photo: Photo): T[] {
+  const maxArea = MAX_MASK_SHARE * photo.width * photo.height;
+  return dedupe(dropPeople(masks.filter((m) => m.area <= maxArea), people));
+}
+
+/**
+ * One candidate per proposed product (its most confident instance, so 40 tins
+ * or a heap of tomatoes give one cut-out), plus at most MAX_BROAD_EXTRAS
+ * broad-phrase masks that aren't already one of those products.
+ */
+function onePerProduct(masks: readonly Candidate[]): Candidate[] {
+  const best = new Map<number, Candidate>();
+  const extras: Candidate[] = [];
+  for (const m of [...masks].sort((a, b) => b.confidence - a.confidence)) {
+    if (m.product === undefined) {
+      if (extras.length < MAX_BROAD_EXTRAS) extras.push(m);
+    } else if (!best.has(m.product)) {
+      best.set(m.product, m);
+    }
+  }
+  return [...best.values(), ...extras];
+}
+
+/**
+ * Runs steps 1 to 5. The result is in reading order: top to bottom, then left to right.
+ * Paid calls are bounded whatever the photo holds: 1 proposal, at most 2 x 12 + 2
+ * SAM phrases, at most 3 reviews of 18 candidates, 1 missed-products call, 1 box
+ * request and at most 2 reviews of 16 box masks: 35 in all.
+ */
 export async function findProducts(client: MetaClient, jobId: string, photo: Photo): Promise<Cutout[]> {
   const { products, broad } = await proposeProducts(client, jobId, photo);
 
-  const queries: { phrase: string; name: string }[] = [];
+  const queries: { phrase: string; product?: number }[] = [];
   const seen = new Set<string>();
-  for (const p of products) for (const phrase of p.phrases) if (!seen.has(phrase)) (seen.add(phrase), queries.push({ phrase, name: p.name }));
-  if (broad && !seen.has(broad)) queries.push({ phrase: broad, name: "" });
+  products.forEach((p, i) => {
+    for (const phrase of p.phrases) if (!seen.has(phrase)) (seen.add(phrase), queries.push({ phrase, product: i }));
+  });
+  if (broad && !seen.has(broad)) queries.push({ phrase: broad });
 
-  const [people, ...found] = await mapLimit([{ phrase: "person", name: "" }, ...queries], SAM_PARALLEL, (q) => segmentPhrase(client, jobId, photo, q.phrase));
-  const candidates: Candidate[] = found.flatMap((masks, i) => masks.map((m) => ({ ...m, name: queries[i]!.name || "Product" })));
-  const unique = dedupe(dropPeople(candidates, people ?? []));
+  const [people = [], ...found] = await mapLimit([{ phrase: "person" }, ...queries], SAM_PARALLEL, (q) => segmentPhrase(client, jobId, photo, q.phrase));
+  const candidates: Candidate[] = found.flatMap((masks, i) => {
+    const q = queries[i]!;
+    return masks.map((m) => (q.product === undefined ? { ...m, name: "" } : { ...m, name: products[q.product]!.name, product: q.product }));
+  });
 
-  const kept = await reviewCandidates(client, jobId, photo, unique);
+  const kept = await reviewCandidates(client, jobId, photo, onePerProduct(usable(candidates, people, photo)));
   const cutouts: Cutout[] = kept.map((k) => ({ name: k.name, mask: k, source: "phrase" }));
 
   const missed = await findMissed(client, jobId, photo, kept);
   if (missed.length > 0) {
     const masks = await segmentBoxes(client, jobId, photo, missed.map((m) => m.box));
-    const fromBoxes: Candidate[] = masks.map((m) => ({ ...m, name: missed[Number(m.objectId)]?.name ?? "Product" }));
-    for (const m of dedupe(fromBoxes)) {
-      if (kept.every((k) => overlap(k, m) <= 0.3 * Math.min(k.area, m.area))) cutouts.push({ name: m.name, mask: m, source: "box" });
-    }
+    // Box masks get every check phrase masks get: people, size, duplicates, overlap with kept cut-outs, and review.
+    const fromBoxes: Candidate[] = usable(
+      masks.map((m) => ({ ...m, name: missed[Number(m.objectId)]?.name ?? "" })),
+      people,
+      photo,
+    ).filter((m) => m.name && kept.every((k) => overlap(k, m) <= 0.3 * Math.min(k.area, m.area)));
+    for (const m of await reviewCandidates(client, jobId, photo, fromBoxes)) cutouts.push({ name: m.name, mask: m, source: "box" });
   }
 
   return cutouts.sort((a, b) => a.mask.top - b.mask.top || a.mask.left - b.mask.left);

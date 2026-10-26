@@ -102,7 +102,7 @@ export class SpendGuard {
     if (!isCost(call.maxUsd) || call.maxUsd === 0) {
       throw new Error(`paid() needs a positive maxUsd for ${call.what}, got ${call.maxUsd}`);
     }
-    const reserved = toMicro(call.maxUsd);
+    const reserved = Math.max(1, toMicro(call.maxUsd)); // at least one micro-dollar, so a tiny maxUsd still counts
     const day = this.#reserve(call, reserved);
     let settled = reserved;
     try {

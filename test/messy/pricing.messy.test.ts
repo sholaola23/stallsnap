@@ -204,3 +204,26 @@ describe("QA round 1 on PR #6", () => {
     expect(r.lines[1]!.question).toBe("How much is Beans?");
   });
 });
+
+// QA round 2 on PR #6.
+describe("QA round 2 on PR #6", () => {
+  async function priced(said: string, call: ScriptedCall) {
+    const spark = scriptedSpark([[call], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "qa6r2", [{ item: 1, name: "Rice" }], [said]);
+    return r.lines[0]!.price?.naira ?? null;
+  }
+  test("650.50 is not read as 650,500", async () => {
+    expect(await priced("rice na 650.50", setPrice(1, 650500, "bag", "rice na 650.50"))).toBeNull();
+  });
+  test("\"abeg\" is not a correction: rice 1500 abeg 2000 is refused at 2000", async () => {
+    expect(await priced("rice 1500 abeg 2000", setPrice(1, 2000, "bag", "abeg 2000"))).toBeNull();
+  });
+  test("still accepted: 1.8, 12.5 and 650.5k", async () => {
+    expect(await priced("rice na 1.8", setPrice(1, 1800, "bag", "rice na 1.8"))).toBe(1800);
+    expect(await priced("rice na 12.5", setPrice(1, 12500, "bag", "rice na 12.5"))).toBe(12500);
+    expect(await priced("rice na 650.5k", setPrice(1, 650500, "bag", "rice na 650.5k"))).toBe(650500);
+  });
+  test("still accepted: a real correction with \"no\"", async () => {
+    expect(await priced("rice na 1500, no, 2000", setPrice(1, 2000, "bag", "no, 2000"))).toBe(2000);
+  });
+});

@@ -4,11 +4,11 @@ StallSnap builds a priced catalogue for a market trader from a stall photo and a
 
 ## Before the event
 
-Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design notes, an idea spike, a day-one test and early prototype code for StallSnap in a separate repo. None of that is in this repo. Everything here was written after kickoff, and the dated build log shows when.
+**Before the event:** on the morning of kickoff day (Mon 26 Oct 2026, roughly 8am to 11am UK time), the idea was planned and tested in a separate repo. None of that code, data or test material is in this repo. Everything here was written after kickoff at 4pm UK the same day.
 
 ## Status
 
-Work in progress for the Meta Global AI Developer Hackathon 2026 (Indie track). Submissions are due Wed 4 Nov 2026, 9pm ET.
+Work in progress for the Meta Global AI Developer Hackathon 2026 (Indie developer track). Submissions are due Wed 4 Nov 2026, 9pm ET.
 
 ## Develop
 

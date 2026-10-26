@@ -1,0 +1,19 @@
+{
+  "name": "stallsnap",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "bun": "1.4.4"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src",
+    "test:messy": "bun test test/messy",
+    "ci": "bun run typecheck && bun run test && bun run test:messy"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}

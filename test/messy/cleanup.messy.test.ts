@@ -41,7 +41,7 @@ test("accepted: brighter, a little more contrast, JPEG artefacts, grey backgroun
 // QA round 1 on PR #10: Muse replies that change the product in a small area,
 // add something next to it, or never answer. Every attack is kept as a test.
 import { describe } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MetaClient } from "../../src/meta/client.ts";
@@ -162,4 +162,38 @@ describe("QA round 1 on PR #10", () => {
       m.done();
     }
   });
+});
+
+// QA round 2 on PR #10: a Muse that stops answering must not hold up the trader's link.
+import { JobLog } from "../../src/joblog.ts";
+import { cleanupStep } from "../../src/pipeline/cleanup.ts";
+
+test("12 items with a Muse that never answers: all plain, well within the shared budget, one call started", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cleanup-budget-"));
+  const guard = new SpendGuard({ ledgerPath: join(dir, "ledger.json"), paidCalls: "on" });
+  let fetches = 0;
+  const fetch = (async (_u: string | URL | Request, init?: RequestInit) => {
+    fetches++;
+    return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("timed out"), { name: "TimeoutError" }))));
+  }) as typeof globalThis.fetch;
+  // The client's own timeout is long (60 s, 3 attempts): only the shared budget can end this quickly.
+  const client = new MetaClient({ apiKey: "k", guard, fetch, timeoutMs: 60_000, sleep: async () => {} });
+  const log = new JobLog(join(dir, "joblog.jsonl"));
+  log.openJob("pub");
+  const plain: string[] = [];
+  const step = cleanupStep(log, client, "pub", (_i, r) => plain.push(r), 300);
+  const cut = new Uint8Array(await sharp({ create: { width: 120, height: 160, channels: 4, background: { r: 200, g: 40, b: 40, alpha: 1 } } }).png().toBuffer());
+  const started = Date.now();
+  for (let i = 1; i <= 12; i++) {
+    const file = join(dir, `item-${i}.png`);
+    writeFileSync(file, cut);
+    const out = await step({ item: i, file }, cut);
+    expect(Buffer.from(out).equals(Buffer.from(cut))).toBe(true);
+  }
+  expect(Date.now() - started).toBeLessThan(3000);
+  expect(plain).toHaveLength(12);
+  expect(plain.every((r) => r === "clean-up time budget used")).toBe(true);
+  expect(fetches).toBe(1);
+  log.close();
+  rmSync(dir, { recursive: true, force: true });
 });

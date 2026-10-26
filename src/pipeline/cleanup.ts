@@ -25,6 +25,8 @@ export const MAX_PRODUCT_DRIFT = 28; // mean absolute difference per channel, 0 
 export const MAX_BACKGROUND_SPREAD = 18; // standard deviation of background brightness
 export const MIN_BACKGROUND_BRIGHTNESS = 200; // a plain light background, not a coloured one
 export const MAX_STRAY_SHARE = 0.005; // share of background pixels that stand out from it
+/** All clean-ups for one publish share this budget, so a stalled Muse can't hold up the trader's link. */
+export const CLEANUP_BUDGET_MS = 90_000;
 const STRAY_DIFF = 25; // brightness difference from the background's median that counts as standing out
 const CHECK_SIDE = 96;
 const INPUT_BACKDROP = { r: 236, g: 236, b: 236 };
@@ -157,12 +159,28 @@ export async function cleanUp(client: MetaClient, jobId: string, cutout: Uint8Ar
  * The publish-time clean-up for one job's items. Each item is one job step, so
  * a republish after a restart doesn't pay twice. Any failure, including a step
  * a crash cut off, gives the plain cut-out: clean-up never stops a catalogue.
+ * All items share `budgetMs` from the first one: once it is used, the rest are
+ * plain, and a call still running when it ends is not waited for.
  */
-export function cleanupStep(log: JobLog, client: MetaClient, jobId: string, onPlain: (item: number, reason: string) => void = () => {}) {
+export function cleanupStep(
+  log: JobLog,
+  client: MetaClient,
+  jobId: string,
+  onPlain: (item: number, reason: string) => void = () => {},
+  budgetMs = CLEANUP_BUDGET_MS,
+) {
+  let deadline: number | undefined;
   return async (item: { item: number; file: string }, png: Uint8Array): Promise<Uint8Array> => {
+    deadline ??= Date.now() + budgetMs;
     try {
       const file = await log.step(jobId, `cleanup:item-${item.item}`, async () => {
-        const result = await cleanUp(client, jobId, png);
+        const left = deadline! - Date.now();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const outOfTime = new Promise<CleanupResult>((resolve) => {
+          timer = setTimeout(() => resolve({ png, cleaned: false, reason: "clean-up time budget used" }), Math.max(0, left));
+        });
+        const result = left <= 0 ? await outOfTime : await Promise.race([cleanUp(client, jobId, png), outOfTime]);
+        clearTimeout(timer);
         if (!result.cleaned) {
           onPlain(item.item, result.reason);
           return item.file;

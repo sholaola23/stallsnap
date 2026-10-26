@@ -105,7 +105,7 @@ When a catalogue is published, `src/pipeline/cleanup.ts` asks Muse Image to give
 | Stray background pixels: more than 25 brighter or darker than the background's median | 0.5% of the background | 0% | 1.3% (a small item placed beside the product) |
 | Size | at least half the cut-out's shorter side | the same or larger | a thumbnail |
 
-If a result passes, the trader's own cut-out is pasted back on top of it, pixel for pixel. Muse only ever supplies the background and the light around the product, so a changed label, a "cleaned up" scuff or another colour of the same product can never reach the catalogue. If a result fails a check, or the call fails, times out (120 s) or is refused, the plain cut-out is used. Clean-up never stops a catalogue and never adds a product. Each item's clean-up is a job step, so it is paid for once. It costs $0.01 per picture.
+If a result passes, the trader's own cut-out is pasted back on top of it, pixel for pixel. Muse only ever supplies the background and the light around the product, so a changed label, a "cleaned up" scuff or another colour of the same product can never reach the catalogue. If a result fails a check, or the call fails, times out (120 s) or is refused, the plain cut-out is used. All the clean-ups for one publish share a 90-second budget, so a stalled Muse delays the trader's link by 90 seconds at most; items left when it runs out use the plain cut-out. Clean-up never stops a catalogue and never adds a product. Each item's clean-up is a job step, so it is paid for once. It costs $0.01 per picture.
 
 The stray-pixel limit was set on synthetic images. Whether a soft studio shadow from the real model stays under it is PENDING the live run.
 

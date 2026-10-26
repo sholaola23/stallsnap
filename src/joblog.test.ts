@@ -75,9 +75,9 @@ describe("steps", () => {
     expect(calls.n).toBe(0);
     expect(guard.callsForJob("job1")).toBe(0);
 
-    b.failJob("job1", "interrupted by a restart");
+    // step() fails the job itself, so no caller can leave it open.
     const c = open();
-    expect(c.job("job1")).toEqual({ status: "failed", reason: "interrupted by a restart" });
+    expect(c.job("job1")).toEqual({ status: "failed", reason: "step cutout:wamid.1 was interrupted by a restart" });
     expect(c.openJobs()).toEqual([]);
   });
 

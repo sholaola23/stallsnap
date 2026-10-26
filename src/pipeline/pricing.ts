@@ -21,6 +21,7 @@
 import type { MetaClient } from "../meta/client.ts";
 import { SPARK_MODEL, sparkMaxUsd, sparkUsd } from "../meta/costs.ts";
 import { SparkError } from "../meta/spark.ts";
+import { type QuoteContext, checkQuote } from "./quotes.ts";
 
 export const MAX_TURNS = 4;
 export const MAX_OUTPUT_TOKENS = 16_000;
@@ -74,7 +75,7 @@ const TOOLS = [
       required: ["item", "question"],
       properties: {
         item: { type: "integer", description: "Item number from the list." },
-        question: { type: "string", description: "One short question for the trader, in simple English." },
+        question: { type: "string", description: "Why the price is missing or unclear, in a few words (for the log; the trader gets a standard question)." },
       },
     },
   },
@@ -94,49 +95,19 @@ const DEVELOPER = [
   "When every item has a price or a question, stop.",
 ].join(" ");
 
-const normalise = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[₦,]/g, "")
-    .replace(/[^\p{L}\p{N}.\s-]/gu, " ")
-    .replace(/\.(?!\d)|(?<!\d)\./g, " ") // keep only decimal points
-    .replace(/\s+/g, " ")
-    .trim();
-
-/** Prices a quote's digits could mean: 650 -> 650 or 650,000; 1.8 -> 1,800; 3k -> 3,000; 5-8 -> 5,800. */
-export function quotePrices(quote: string): number[] | undefined {
-  const text = normalise(quote);
-  // A number with letters mixed in ("6O00", "1l500") can't be read safely: no price matches it.
-  for (const word of text.split(" ")) {
-    if (/\d/.test(word) && /\p{L}/u.test(word) && !/^n?\d+(?:\.\d+)?k?$/.test(word)) return [];
-  }
-  const tokens = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(k|thousand)?/g)];
-  if (tokens.length === 0) return undefined;
-  const out = new Set<number>();
-  for (const [, a, b] of text.matchAll(/\b(\d)\s*-\s*(\d)\b/g)) out.add(Number(a) * 1000 + Number(b) * 100);
-  for (const [, num, k] of tokens) {
-    const n = Number(num);
-    if (k) out.add(Math.round(n * 1000));
-    else {
-      if (Number.isInteger(n)) out.add(n);
-      out.add(Math.round(n * 1000));
-    }
-  }
-  return [...out];
-}
-
 type Checked = { ok: true } | { ok: false; reason: string };
 
-function checkCall(name: string, args: unknown, items: readonly { item: number; name: string }[], heard: string): { result: Checked; apply?: (lines: Map<number, Line>) => void } {
+/** The question the trader gets. Code writes it: the model's wording is never sent. */
+export const questionFor = (name: string) => `How much is ${name}?`;
+
+function checkCall(name: string, args: unknown, ctx: QuoteContext): { result: Checked; apply?: (lines: Map<number, Line>) => void } {
   const a = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
   const item = a.item;
-  const line = typeof item === "number" && Number.isInteger(item) ? items.find((i) => i.item === item) : undefined;
-  if (!line) return { result: { ok: false, reason: `item must be one of ${items.map((i) => i.item).join(", ")}` } };
+  const line = typeof item === "number" && Number.isInteger(item) ? ctx.items.find((i) => i.item === item) : undefined;
+  if (!line) return { result: { ok: false, reason: `item must be one of ${ctx.items.map((i) => i.item).join(", ")}` } };
 
   if (name === "flag_missing_price") {
-    const question = typeof a.question === "string" ? a.question.replace(/\s+/g, " ").trim().slice(0, 200) : "";
-    const q = question || `How much is ${line.name}?`;
-    return { result: { ok: true }, apply: (lines) => lines.set(line.item, { ...lines.get(line.item)!, price: null, question: q }) };
+    return { result: { ok: true }, apply: (lines) => lines.set(line.item, { ...lines.get(line.item)!, price: null, question: questionFor(line.name) }) };
   }
   if (name !== "set_price") return { result: { ok: false, reason: `unknown tool ${name}` } };
 
@@ -147,15 +118,14 @@ function checkCall(name: string, args: unknown, items: readonly { item: number; 
   const unit = typeof a.unit === "string" ? a.unit.trim().toLowerCase() : "";
   if (!(SALE_UNITS as readonly string[]).includes(unit)) return { result: { ok: false, reason: `unit must be one of: ${SALE_UNITS.join(", ")}` } };
   const quote = typeof a.quote === "string" ? a.quote.trim() : "";
-  const nq = normalise(quote);
-  if (nq.length < 2 || !heard.includes(nq)) return { result: { ok: false, reason: "quote must be the trader's exact words from the transcript" } };
-  // "two to two-five", "3k or 3,500", "between 2 and 3": not one price, so ask.
-  if (/\b(to|or|between|abi)\b/.test(nq)) return { result: { ok: false, reason: "a range or a choice of prices is not a price; flag it and ask the trader" } };
-  const possible = quotePrices(quote);
-  if (possible && !possible.includes(naira)) return { result: { ok: false, reason: `price_naira ${naira} doesn't match the number in the quote` } };
+  const verdict = checkQuote(ctx, { ...line, unit }, naira, quote);
+  if (!verdict.ok) return { result: verdict };
   return {
     result: { ok: true },
-    apply: (lines) => lines.set(line.item, { ...lines.get(line.item)!, price: { naira, unit: unit as SaleUnit, quote }, question: null }),
+    apply: (lines) => {
+      ctx.used.set(`${verdict.message}:${verdict.at}`, line.item);
+      lines.set(line.item, { ...lines.get(line.item)!, price: { naira, unit: unit as SaleUnit, quote }, question: null });
+    },
   };
 }
 
@@ -168,7 +138,7 @@ export async function priceItems(
   const lines = new Map<number, Line>(items.map((i) => [i.item, { item: i.item, name: i.name, price: null, question: null }]));
   const events: ToolEvent[] = [];
   const decided = new Set<number>();
-  const heard = normalise(said.join(" \n "));
+  const ctx: QuoteContext = { items, said, used: new Map() };
   const repeats = new Map<string, number>();
 
   const listText = items.map((i) => `${i.item}. ${i.name}`).join("\n");
@@ -178,7 +148,7 @@ export async function priceItems(
     { type: "message", role: "user", content: [{ type: "input_text", text: `Items on the stall:\n${listText}\n\nWhat the trader said:\n${saidText}` }] },
   ];
   const finish = (turns: number, stopped: PricingResult["stopped"]): PricingResult => {
-    for (const line of lines.values()) if (!line.price && !line.question) line.question = `How much is ${line.name}?`;
+    for (const line of lines.values()) if (!line.price && !line.question) line.question = questionFor(line.name);
     return { lines: [...lines.values()], events, turns, stopped };
   };
 
@@ -212,7 +182,7 @@ export async function priceItems(
       repeats.set(key, seen);
       if (seen >= 3) repeated = true;
 
-      const { result, apply } = args === undefined ? { result: { ok: false as const, reason: "arguments must be JSON" } } : checkCall(name, args, items, heard);
+      const { result, apply } = args === undefined ? { result: { ok: false as const, reason: "arguments must be JSON" } } : checkCall(name, args, ctx);
       if (result.ok && apply) {
         apply(lines);
         decided.add((args as { item: number }).item);

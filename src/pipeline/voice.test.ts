@@ -60,7 +60,7 @@ describe("transcribe", () => {
       audioEncoding: "WAV",
       mode: "PUSH_TO_TALK",
       languageBias: ["English"],
-      keywords: ["naira", "₦", "kobo", "thousand", "hundred", "Indomie", "Peak milk"],
+      keywords: ["naira", "₦", "kobo", "thousand", "tousand", "hundred", "Indomie", "Peak milk"],
     });
     expect((form.get("audio") as Blob).type).toBe("audio/wav");
     expect(meta.calls[0]!.headers.get("accept")).toBe("application/json");
@@ -96,6 +96,6 @@ test("wavDurationMs reads the header", () => {
 });
 
 test("voiceKeywords dedupes and caps", () => {
-  expect(voiceKeywords(["Naira", "  Peak   milk ", "peak milk", ""])).toEqual(["naira", "₦", "kobo", "thousand", "hundred", "Peak milk"]);
+  expect(voiceKeywords(["Naira", "  Peak   milk ", "peak milk", ""])).toEqual(["naira", "₦", "kobo", "thousand", "tousand", "hundred", "Peak milk"]);
   expect(voiceKeywords(Array.from({ length: 100 }, (_, i) => `item ${i}`))).toHaveLength(40);
 });

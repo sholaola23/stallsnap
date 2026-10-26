@@ -92,6 +92,23 @@ To try it on a real photo (needs `MODEL_API_KEY`; responses are cached in `.cach
 bun src/pipeline/try-cutouts.ts stall.jpg
 ```
 
+### Prices: ask, never guess
+
+`src/pipeline/pricing.ts` runs a Muse Spark tool loop over the item list and everything the trader said (voice transcripts and typed text). Spark can only call `set_price` or `flag_missing_price`, and every call is checked before it counts:
+
+| Check | Refused example |
+|---|---|
+| The item is one of the cut-outs | item 3 on a two-item stall |
+| Whole naira from 10 to 5,000,000 | `650.50` (kobo), `-6000`, `"N/A"` |
+| A known sale unit | `per bag` |
+| The quote is the trader's own words, found in the transcript | a quote Spark made up |
+| If the quote has digits, the price matches one of them | 750 for "Peak milk na 650"; 600 for "6OO" |
+| The quote isn't a range or a choice | "two to two-five", "3k or 3,500" |
+
+A refused call is answered with the reason, so Spark can fix it or ask. Any item still without a price at the end gets a question for the trader. Shorthand the trader really uses is accepted: `₦6,000`, `6k`, `1.8` for 1,800, `5-8` for 5,800, and prices in words. A later correction wins over an earlier price.
+
+The loop stops when every item is decided, when Spark answers in plain text, after 4 turns, or when the same call is made 3 times. History is replayed statelessly (`store: false`, encrypted reasoning).
+
 ## Build log
 
 See [docs/build-log.md](docs/build-log.md).

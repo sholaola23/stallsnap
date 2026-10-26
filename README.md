@@ -4,11 +4,11 @@ StallSnap builds a priced catalogue for a market trader from a stall photo and a
 
 ## Before the event
 
-Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design notes, an idea spike, a day-one test and early prototype code for StallSnap in a separate repo. None of that is in this repo. Everything here was written after kickoff, and the dated build log shows when.
+**Before the event:** on the morning of kickoff day (Mon 26 Oct 2026, roughly 8am to 11am UK time), the idea was planned and tested in a separate repo. None of that code, data or test material is in this repo. Everything here was written after kickoff at 4pm UK the same day.
 
 ## Status
 
-Work in progress for the Meta Global AI Developer Hackathon 2026 (Indie track). Submissions are due Wed 4 Nov 2026, 9pm ET.
+Work in progress for the Meta Global AI Developer Hackathon 2026 (Indie developer track). Submissions are due Wed 4 Nov 2026, 9pm ET.
 
 ## Develop
 
@@ -33,7 +33,9 @@ Every paid Meta API call goes through `SpendGuard.paid()` in `src/spend-guard.ts
 | Calls per job | 60 | Call 61 in one job (one trader's photo and voice note) is refused |
 | Daily spend | $2 (UTC day) | A call whose worst-case cost would take today's spend over $2 is refused |
 
-Each call states its worst-case cost. That amount is held before the call starts, so calls running together can't pass the cap, and is swapped for the real cost when the call ends. A call that fails keeps its worst-case cost, since Meta may have billed it. Spend and per-job counts are kept in `.data/spend-ledger.json`, so a restart doesn't reset them. If that file is damaged, paid calls stop until it is fixed. Any value of `STALLSNAP_PAID_CALLS` other than blank, `on` or `off` stops start-up.
+Each call states its worst-case cost. That amount is held before the call starts, so calls running together can't pass the cap, and is swapped for the real cost when the call ends. A call that fails keeps its worst-case cost, since Meta may have billed it. Each retry must be its own paid call.
+
+Spend and per-job counts live only in `.data/spend-ledger.json`. Every check reads and writes that file under a lock, so two processes on one machine share one $2 cap. Money is counted in whole micro-dollars. The day rolls over at UTC midnight and only forwards, so a clock stepping back can't reset the cap. If the file is damaged, paid calls stop until it is fixed. Keep `.data/` on a persistent volume: a host that wipes the disk on each deploy would start each deploy at $0. Any value of `STALLSNAP_PAID_CALLS` other than blank, `on` or `off` stops start-up, and nothing in the code can switch paid calls on when it says `off`.
 
 Check today's spend with `bun src/spend-guard.ts`.
 

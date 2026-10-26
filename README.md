@@ -55,6 +55,28 @@ Voice notes arrive as type `audio` with `voice: true` (Meta's audio webhook refe
 
 `src/whatsapp/graph.ts` sends through the Graph API v26.0 with `WHATSAPP_ACCESS_TOKEN` (a system-user token) and `WHATSAPP_PHONE_NUMBER_ID`: plain text, a message with one reply button, a message with one link button, and the "typing..." indicator. It keeps messages to one person 6 seconds apart (WhatsApp's pair rate limit) and retries rate limits, Meta server errors and network failures after 1, 4 and 16 seconds. It downloads photos and voice notes by media id, checking type, size and hash, and fetches a fresh URL once if the 5-minute URL has expired.
 
+### The conversation
+
+`src/whatsapp/conversation.ts` runs one catalogue job per trader. Every message StallSnap sends is in `src/whatsapp/copy.ts`.
+
+| Trader sends | StallSnap replies |
+|---|---|
+| A greeting or anything off-topic | The welcome, which says StallSnap only makes catalogues |
+| A photo only | "Photo received. Now send a voice note saying your prices." |
+| A voice note only | "Voice note received. Now send a photo of your stall." |
+| A photo and a voice note (or typed prices, or a caption), in either order | "Thank you! I am making your price list now...", with "typing..." while it works |
+| (Some items have no price) | One message listing those items with a question each. Nothing is guessed |
+| A voice note or text answering | **One** priced list with **one** "Yes, publish" button. Items still without a price say "ask for price" |
+| A change, such as "2 na 150" | A new list with a new button. The old button no longer publishes |
+| "Yes, publish" (or a typed yes) | The catalogue link, as an "Open catalogue" button and as text to forward |
+| A new photo at any point after the list | A new catalogue |
+
+A photo or voice note StallSnap can't use (unreadable, too big, no speech) is dropped and the trader is asked to send it again; the rest of the job is kept. The spend cap pauses StallSnap and ends the job. Anything else that breaks ends the job, and the trader is asked to start again.
+
+After a restart, a job that was working carries on: finished paid steps come back from the job log for free, and a paid step that was cut off ends the job cleanly. A message whose handling was cut off is handled again, and whatever it last sent goes again.
+
+Limits per job: one photo, 10 voice notes or texts, 5 changes after the list.
+
 ### Crash safety
 
 `src/joblog.ts` keeps an append-only log in `.data/joblog.jsonl`, synced to disk after every write:

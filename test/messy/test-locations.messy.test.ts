@@ -5,7 +5,7 @@ import { Glob } from "bun";
 
 test("every test file is somewhere CI runs it", async () => {
   const outside: string[] = [];
-  for await (const file of new Glob("**/*.test.ts").scan({ cwd: new URL("../..", import.meta.url).pathname, onlyFiles: true })) {
+  for await (const file of new Glob("**/*{.test,_test,.spec,_spec}.{ts,tsx,js,jsx,mjs,cjs}").scan({ cwd: new URL("../..", import.meta.url).pathname, onlyFiles: true })) {
     if (file.startsWith("node_modules/")) continue;
     if (!file.startsWith("src/") && !file.startsWith("test/messy/")) outside.push(file);
   }

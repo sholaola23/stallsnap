@@ -49,7 +49,7 @@ describe("placeholder secrets count as missing", () => {
     });
   }
 
-  for (const keep of ["sk-abc123xyz", "EAAGabc123", "todo-list-42", "x1y2z3"]) {
+  for (const keep of ["sk-abc123xyz", "EAAGabc123", "todo-list-42", "x1y2z3", "my-stallsnap-verify-2026", "add-on-token-7", "stallsnap_here", "$abc123def"]) {
     test(`a real-looking value ${JSON.stringify(keep)} is kept`, () => {
       expect(readEnv("MODEL_API_KEY", { MODEL_API_KEY: keep })).toBe(keep);
     });
@@ -73,7 +73,7 @@ const allLines = (await Bun.file(new URL("../../.env.example", import.meta.url))
 const lines = allLines.filter((l) => l !== "" && !l.startsWith("#"));
 
 /** A line, commented or not, that sets a name to a value. */
-export const hasValue = (line: string) => /^#?\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*\S/.test(line.trim());
+export const hasValue = (line: string) => /[A-Za-z_][A-Za-z0-9_]*\s*=\s*\S/.test(line.trim());
 
 describe(".env.example", () => {
   test("has names only, never a value", () => {
@@ -85,7 +85,7 @@ describe(".env.example", () => {
   });
 
   test("the value check catches commented values and keeps plain comments", () => {
-    for (const bad of ["# APP_SECRET=sk_live_x", "#APP_SECRET=x", "APP_SECRET=abc", "  # MODEL_API_KEY = k"]) expect(hasValue(bad)).toBe(true);
+    for (const bad of ["# APP_SECRET=sk_live_x", "#APP_SECRET=x", "APP_SECRET=abc", "  # MODEL_API_KEY = k", "## APP_SECRET=sk_live_x", "# export APP_SECRET=sk_live_x", "# e.g. APP_SECRET=sk_live_x", "# - APP_SECRET=sk_live_x"]) expect(hasValue(bad)).toBe(true);
     for (const ok of ["APP_SECRET=", "# Names only. Put real values in your environment's secrets.", '# "off" stops every paid model call. Blank means on.', ""]) expect(hasValue(ok)).toBe(false);
   });
 

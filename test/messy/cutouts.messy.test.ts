@@ -158,3 +158,144 @@ describe("Spark responses that aren't clean", () => {
     });
   }
 });
+
+// QA round 1 on PR #5.
+import { findProducts } from "../../src/pipeline/cutouts.ts";
+import { MAX_INPUT_PIXELS } from "../../src/pipeline/photo.ts";
+import { MetaApiError } from "../../src/meta/client.ts";
+import sharp from "sharp";
+import { describeCall } from "../../src/pipeline/test-stall.ts";
+import type { FakeCall } from "../../src/meta/test-fakes.ts";
+
+describe("QA round 1 on PR #5", () => {
+  const W = 400;
+  const H = 300;
+  /** A fake Meta for findProducts: SAM answers from `sam` by phrase; Spark proposes `products`, reviews by `review`, boxes `missed`. */
+  function stall(o: {
+    products: { name: string; phrase_a: string; phrase_b: string }[];
+    broad?: string;
+    sam: Record<string, { box: { left: number; top: number; right: number; bottom: number }; c: number }[]>;
+    boxes?: { box: { left: number; top: number; right: number; bottom: number }; c: number }[];
+    missed?: { name: string; x1: number; y1: number; x2: number; y2: number }[];
+    review?: (names: string[]) => { crop: number; sellable: boolean; name: string }[];
+    samFail?: string;
+  }) {
+    const samCalls: string[] = [];
+    const meta = fakeMeta((c: FakeCall) => {
+      const d = describeCall(c.body);
+      if (d.model === "sam-3.1") {
+        samCalls.push(d.prompt);
+        if (d.prompt === o.samFail) return new Response('{"error":{"message":"boom"}}', { status: 400 });
+        if (d.prompt.startsWith("<0f>")) return responseWithText(samText((o.boxes ?? []).map((b, i) => ({ ...b, id: i }))));
+        return responseWithText(samText(o.sam[d.prompt] ?? []));
+      }
+      if (d.format === "stall_products") return responseWithText(JSON.stringify({ products: o.products, broad_phrase: o.broad ?? "" }));
+      if (d.format === "crop_review") {
+        const names = d.texts.map((t) => /suggested name: (.*)\):$/.exec(t)?.[1] ?? "");
+        const verdicts = o.review ? o.review(names) : names.map((n, i) => ({ crop: i + 1, sellable: true, name: n }));
+        return responseWithText(JSON.stringify({ verdicts }));
+      }
+      if (d.format === "missed_products") return responseWithText(JSON.stringify({ missed: o.missed ?? [] }));
+      throw new Error("unexpected call");
+    });
+    return { client: new MetaClient({ apiKey: "k", guard, fetch: meta.fetch }), samCalls, meta };
+  }
+  const box = (left: number, top: number, w: number, h: number) => ({ left, top, right: left + w, bottom: top + h });
+
+  test("a broad phrase returning a whole-table mask doesn't wipe out the products inside it", async () => {
+    const f = stall({
+      products: [
+        { name: "Tomato paste", phrase_a: "tomato tin", phrase_b: "tomato can" },
+        { name: "Peak milk", phrase_a: "milk tin", phrase_b: "milk can" },
+      ],
+      broad: "tin",
+      sam: { "tomato tin": [{ box: TOMATO, c: 0.8 }], "milk tin": [{ box: MILK, c: 0.8 }], tin: [{ box: box(0, 0, W, H), c: 0.95 }] },
+    });
+    const cut = await findProducts(f.client, "j", photo);
+    expect(cut.map((c) => c.name).sort()).toEqual(["Peak milk", "Tomato paste"]);
+  });
+
+  test("a missed-product box over the trader's shirt gives no cut-out", async () => {
+    const shirt = box(150, 160, 80, 100);
+    const f = stall({
+      products: [{ name: "Ankara fabric", phrase_a: "fabric", phrase_b: "cloth" }],
+      sam: { person: [{ box: box(130, 100, 120, 200), c: 0.95 }], fabric: [{ box: shirt, c: 0.9 }] },
+      missed: [{ name: "Ankara fabric", x1: 375, y1: 533, x2: 575, y2: 866 }],
+      boxes: [{ box: shirt, c: 0.9 }],
+    });
+    expect(await findProducts(f.client, "j", photo)).toEqual([]);
+  });
+
+  test("a heap of 500 tomatoes stays within the 60-call cap and gives the product", async () => {
+    const heap = Array.from({ length: 500 }, (_, i) => ({ box: box(10 + (i % 25) * 15, 10 + Math.floor(i / 25) * 14, 12, 12), c: 0.6 + (i % 10) / 100 }));
+    const f = stall({ products: [{ name: "Tomatoes", phrase_a: "tomato", phrase_b: "red tomato" }], sam: { tomato: heap } });
+    const cut = await findProducts(f.client, "j", photo);
+    expect(cut.map((c) => c.name)).toEqual(["Tomatoes"]);
+    expect(guard.callsForJob("j")).toBeLessThanOrEqual(10);
+  });
+
+  test("40 identical tins give one cut-out for that product", async () => {
+    const tins = Array.from({ length: 40 }, (_, i) => ({ box: box(5 + (i % 10) * 39, 5 + Math.floor(i / 10) * 70, 30, 60), c: 0.7 + (i % 5) / 100 }));
+    const f = stall({ products: [{ name: "Tomato paste", phrase_a: "tomato tin", phrase_b: "tomato can" }], sam: { "tomato tin": tins, "tomato can": tins } });
+    const cut = await findProducts(f.client, "j", photo);
+    expect(cut).toHaveLength(1);
+    expect(cut[0]!.name).toBe("Tomato paste");
+  });
+
+  test("after a SAM call fails, no new SAM call starts", async () => {
+    const products = Array.from({ length: 12 }, (_, i) => ({ name: `P${i}`, phrase_a: `item ${i} a`, phrase_b: `item ${i} b` }));
+    const f = stall({ products, broad: "packet", sam: {}, samFail: "item 2 b" });
+    await expect(findProducts(f.client, "j", photo)).rejects.toBeInstanceOf(MetaApiError);
+    // Before the fix the other workers carried on through all 26 phrases after the job had
+    // already failed. Now nothing new starts once the failure is caught.
+    const atFailure = f.samCalls.length;
+    await Bun.sleep(20);
+    expect(f.samCalls.length).toBe(atFailure);
+    expect(atFailure).toBeLessThan(26); // person + 24 product phrases + broad = 26 when nothing stops
+  });
+
+  test("an accepted broad-phrase crop with no name is dropped, not called \"Product\"", async () => {
+    const f = stall({
+      products: [],
+      broad: "packet",
+      sam: { packet: [{ box: TOMATO, c: 0.8 }] },
+      review: (names) => names.map((_, i) => ({ crop: i + 1, sellable: true, name: "" })),
+    });
+    expect(await findProducts(f.client, "j", photo)).toEqual([]);
+  });
+
+  test("a JPEG with corrupt bytes is refused with the trader message", async () => {
+    const good = await sharp({ create: { width: 800, height: 600, channels: 3, background: "#c84" } })
+      .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><circle cx="400" cy="300" r="200" fill="#123"/></svg>') }])
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    const bad = Buffer.from(good);
+    for (let i = 600; i < bad.length - 2; i += 97) bad[i] = 0x5a;
+    await expect(preparePhoto(new Uint8Array(bad))).rejects.toThrow("couldn't be opened");
+    await expect(preparePhoto(new Uint8Array(good))).resolves.toBeDefined();
+  });
+
+  test("a photo over the pixel limit is told it's too large", async () => {
+    const side = Math.ceil(Math.sqrt(MAX_INPUT_PIXELS)) + 10;
+    const huge = await sharp({ create: { width: side, height: side, channels: 3, background: "#fff" } }).jpeg({ quality: 10 }).toBuffer();
+    await expect(preparePhoto(new Uint8Array(huge))).rejects.toThrow("too large");
+  });
+
+  for (const orientation of [3, 6, 8]) {
+    test(`EXIF orientation ${orientation}: the left half stays on the left in the prepared photo`, async () => {
+      // Red on the left as the trader sees it: stored so that the orientation tag puts it there.
+      const shown = await sharp({ create: { width: 400, height: 300, channels: 3, background: "#00f" } })
+        .composite([{ input: { create: { width: 200, height: 300, channels: 3, background: "#f00" } }, left: 0, top: 0 }])
+        .png()
+        .toBuffer();
+      const undo = { 3: 180, 6: -90, 8: 90 }[orientation]!;
+      const stored = await sharp(await sharp(shown).rotate(undo).toBuffer()).withMetadata({ orientation }).jpeg().toBuffer();
+      const p = await preparePhoto(new Uint8Array(stored));
+      expect([p.width, p.height]).toEqual([400, 300]);
+      const { data } = await sharp(p.jpeg).raw().toBuffer({ resolveWithObject: true });
+      const at = (x: number, y: number) => data.subarray((y * p.width + x) * 3, (y * p.width + x) * 3 + 3);
+      expect(at(50, 150)[0]!).toBeGreaterThan(200); // red on the left
+      expect(at(350, 150)[2]!).toBeGreaterThan(200); // blue on the right
+    });
+  }
+});

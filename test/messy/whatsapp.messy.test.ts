@@ -113,3 +113,32 @@ describe("webhook bodies that aren't what we expect", () => {
     expect(parseWebhook(payload([message("interactive", { interactive: { type: "button_reply", button_reply: { title: "Yes" } } })]))).toEqual([]);
   });
 });
+
+// QA round 1 on PR #3.
+describe("QA round 1 on PR #3", () => {
+  test("a (0) trunk prefix is dropped, so the trader isn't locked out", () => {
+    expect([...parseAllowedNumbers("+44 (0)7700 900123")]).toEqual(["447700900123"]);
+    expect([...parseAllowedNumbers("+234 (0)803 123 4567")]).toEqual(["2348031234567"]);
+    expect([...parseAllowedNumbers("0044 (0) 7700-900123")]).toEqual(["447700900123"]);
+  });
+
+  test("invisible direction marks copied from phone contacts are removed", () => {
+    expect([...parseAllowedNumbers("‪+44 7700 900123‬, ‎+234 803 123 4567")]).toEqual(["447700900123", "2348031234567"]);
+  });
+
+  for (const bad of ["07700900123", "07700 900123", "44770O900123", "N/A", "+44 (020) 7946 0000", "+44 020 7946 0000", "+234 0803 123 4567"]) {
+    test(`the error for ${JSON.stringify(bad)} shows at most its last 4 digits`, () => {
+      let message = "";
+      try {
+        parseAllowedNumbers(`447700900999, ${bad}`);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain("entry 2");
+      const digits = bad.replace(/\D/g, "");
+      if (digits.length > 4) expect(message).not.toContain(digits);
+      // No run of 5 or more digits from the number; the sample number in the hint is allowed.
+      expect(message.replace("447700900123", "")).not.toMatch(/\d{5,}/);
+    });
+  }
+});

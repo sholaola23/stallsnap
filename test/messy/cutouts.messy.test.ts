@@ -177,7 +177,7 @@ describe("QA round 1 on PR #5", () => {
     sam: Record<string, { box: { left: number; top: number; right: number; bottom: number }; c: number }[]>;
     boxes?: { box: { left: number; top: number; right: number; bottom: number }; c: number }[];
     missed?: { name: string; x1: number; y1: number; x2: number; y2: number }[];
-    review?: (names: string[]) => { crop: number; sellable: boolean; name: string }[];
+    review?: (names: string[], developer: string) => { crop: number; sellable: boolean; name: string; same_as?: number }[];
     samFail?: string;
   }) {
     const samCalls: string[] = [];
@@ -192,7 +192,7 @@ describe("QA round 1 on PR #5", () => {
       if (d.format === "stall_products") return responseWithText(JSON.stringify({ products: o.products, broad_phrase: o.broad ?? "" }));
       if (d.format === "crop_review") {
         const names = d.texts.map((t) => /suggested name: (.*)\):$/.exec(t)?.[1] ?? "");
-        const verdicts = o.review ? o.review(names) : names.map((n, i) => ({ crop: i + 1, sellable: true, name: n }));
+        const verdicts = o.review ? o.review(names, d.developer) : names.map((n, i) => ({ crop: i + 1, sellable: true, name: n, same_as: 0 }));
         return responseWithText(JSON.stringify({ verdicts }));
       }
       if (d.format === "missed_products") return responseWithText(JSON.stringify({ missed: o.missed ?? [] }));
@@ -298,4 +298,55 @@ describe("QA round 1 on PR #5", () => {
       expect(at(350, 150)[2]!).toBeGreaterThan(200); // blue on the right
     });
   }
+});
+
+// QA round 2 on PR #5: other items of a kept product must not come back through the missed-products step.
+describe("QA round 2 on PR #5", () => {
+  const W = 400;
+  const box = (left: number, top: number, w: number, h: number) => ({ left, top, right: left + w, bottom: top + h });
+  const tins = Array.from({ length: 40 }, (_, i) => ({ box: box(5 + (i % 10) * 39, 5 + Math.floor(i / 10) * 70, 30, 60), c: 0.7 + (i % 5) / 100 }));
+  const toGridBox = (b: ReturnType<typeof box>) => ({ x1: Math.round((b.left / W) * 1000), y1: Math.round((b.top / 300) * 1000), x2: Math.round((b.right / W) * 1000), y2: Math.round((b.bottom / 300) * 1000) });
+
+  function stall(review: (n: number, developer: string) => { crop: number; sellable: boolean; name: string; same_as?: number }[]) {
+    const prompts: Record<string, string> = {};
+    const meta = fakeMeta((c: FakeCall) => {
+      const d = describeCall(c.body);
+      if (d.model === "sam-3.1") {
+        if (d.prompt.startsWith("<0f>")) return responseWithText(samText(tins.slice(1, 17).map((t, i) => ({ ...t, id: i }))));
+        return responseWithText(samText(d.prompt === "tomato tin" || d.prompt === "tomato can" ? tins : []));
+      }
+      if (d.format === "stall_products") return responseWithText(JSON.stringify({ products: [{ name: "Tomato paste", phrase_a: "tomato tin", phrase_b: "tomato can" }], broad_phrase: "" }));
+      if (d.format === "missed_products") {
+        prompts.missed = d.developer;
+        return responseWithText(JSON.stringify({ missed: tins.slice(1, 17).map((t) => ({ name: "Tomato tin", ...toGridBox(t.box) })) }));
+      }
+      if (d.format === "crop_review") {
+        const n = d.texts.filter((t) => t.startsWith("Crop ")).length;
+        if (d.developer.includes("already in the catalogue")) prompts.boxReview = d.developer;
+        return responseWithText(JSON.stringify({ verdicts: review(n, d.developer) }));
+      }
+      throw new Error("unexpected call");
+    });
+    return { client: new MetaClient({ apiKey: "k", guard, fetch: meta.fetch }), prompts };
+  }
+
+  test("40 tins, with the missed step boxing 16 more of them, give exactly one cut-out", async () => {
+    const f = stall((n, dev) => Array.from({ length: n }, (_, i) => ({ crop: i + 1, sellable: true, name: dev.includes("already in the catalogue") ? "Tomato tin" : "Tomato paste", same_as: dev.includes("already in the catalogue") ? 1 : 0 })));
+    const cut = await findProducts(f.client, "j", photo);
+    expect(cut.map((c) => c.name)).toEqual(["Tomato paste"]);
+    expect(f.prompts.missed).toContain("every other item");
+    expect(f.prompts.boxReview).toContain("1. Tomato paste");
+  });
+
+  test("if review misses the repeat (same_as 0), repeated box names still give at most one extra cut-out", async () => {
+    const f = stall((n) => Array.from({ length: n }, (_, i) => ({ crop: i + 1, sellable: true, name: "Tomato tin", same_as: 0 })));
+    const cut = await findProducts(f.client, "j", photo);
+    expect(cut.length).toBeLessThanOrEqual(2);
+  });
+
+  test("a box verdict with no same_as is treated as a repeat and dropped", async () => {
+    const f = stall((n, dev) => Array.from({ length: n }, (_, i) => ({ crop: i + 1, sellable: true, name: dev.includes("already in the catalogue") ? "Sardines" : "Tomato paste" })));
+    const cut = await findProducts(f.client, "j", photo);
+    expect(cut.map((c) => c.name)).toEqual(["Tomato paste"]);
+  });
 });

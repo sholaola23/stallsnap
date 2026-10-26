@@ -96,17 +96,18 @@ describe("damaged ledger files stop paid calls", () => {
   }
 });
 
+const counting = (counter: { n: number }, usd: number) => async () => {
+  counter.n++;
+  return { value: 1, usd };
+};
+const tryPaid = (g: SpendGuard, jobId: string, maxUsd: number, run: () => Promise<{ value: number; usd: number }>) =>
+  g.paid({ jobId, what: "qa", maxUsd }, run).then(
+    () => true,
+    (e) => (e instanceof SpendRefused ? false : Promise.reject(e)),
+  );
+
 // QA round 1 on PR #2: each repro is kept as a test.
 describe("QA round 1 on PR #2", () => {
-  const counting = (counter: { n: number }, usd: number) => async () => {
-    counter.n++;
-    return { value: 1, usd };
-  };
-  const tryPaid = (g: SpendGuard, jobId: string, maxUsd: number, run: () => Promise<{ value: number; usd: number }>) =>
-    g.paid({ jobId, what: "qa", maxUsd }, run).then(
-      () => true,
-      (e) => (e instanceof SpendRefused ? false : Promise.reject(e)),
-    );
 
   test("two guards on one ledger share one $2 cap and both jobs' counts survive", async () => {
     const a = new SpendGuard({ ledgerPath, paidCalls: "on" });
@@ -192,5 +193,16 @@ describe("QA round 1 on PR #2", () => {
       if (before === undefined) delete process.env.STALLSNAP_PAID_CALLS;
       else process.env.STALLSNAP_PAID_CALLS = before;
     }
+  });
+});
+
+// QA round 2 on PR #2: a maxUsd smaller than one micro-dollar still reserves one.
+describe("QA round 2 on PR #2", () => {
+  test("a call with maxUsd 1e-12 is refused once the cap is spent", async () => {
+    const g = new SpendGuard({ ledgerPath, paidCalls: "on" });
+    const calls = { n: 0 };
+    for (let i = 0; i < 20; i++) await tryPaid(g, `t${i}`, 0.1, counting(calls, 0.1));
+    expect(calls.n).toBe(20);
+    expect(await tryPaid(g, "tiny", 1e-12, counting(calls, 0))).toBe(false);
   });
 });

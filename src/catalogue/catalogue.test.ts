@@ -48,6 +48,7 @@ async function publishedThroughWhatsApp() {
     },
     publish: (s) => publishCatalogue(s, h.dir, "https://stall.example"),
     dataDir: h.dir,
+    now: () => 1_000_000, // test messages carry small timestamps
   });
   await conversation.handle(msg.photo());
   await conversation.handle(msg.voice("prices"));

@@ -34,8 +34,8 @@ test("a step that failed before also fails its job when asked again", async () =
   const log = new JobLog(path);
   log.openJob("j");
   await log.step("j", "k", async () => Promise.reject(new Error("boom"))).catch(() => {});
-  expect(log.job("j")?.status).toBe("open"); // the first failure is the caller's to handle
-  await log.step("j", "k", async () => 1).catch(() => {});
+  expect(log.job("j")?.status).toBe("failed"); // QA round 2 on PR #3: failed at once, not on the next ask
+  await expect(log.step("j", "k", async () => 1)).rejects.toThrow("boom");
   expect(log.job("j")?.status).toBe("failed");
   log.close();
 });
@@ -60,4 +60,18 @@ test("a valid log still loads after the checks", () => {
   expect(log.pending()).toEqual([{ id: "wamid.1", msg: { a: 1 } }]);
   expect(log.openJobs()).toEqual(["j"]);
   log.close();
+});
+
+// QA round 2 on PR #3: a step whose run() throws fails its job, so a handler that lets the error bubble up can't leave it open.
+test("a step that throws fails its job, and it stays failed after a restart", async () => {
+  const first = new JobLog(path);
+  first.openJob("job:T");
+  await first.step("job:T", "model", async () => Promise.reject(new Error("model down"))).catch(() => {});
+  expect(first.job("job:T")?.status).toBe("failed");
+  expect(first.openJobs()).toEqual([]);
+  first.close();
+  const second = new JobLog(path);
+  expect(second.openJobs()).toEqual([]);
+  expect(second.job("job:T")?.reason).toContain("model down");
+  second.close();
 });

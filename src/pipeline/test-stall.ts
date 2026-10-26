@@ -49,9 +49,11 @@ export const responseWithText = (text: string, extra: Record<string, unknown> = 
 });
 
 /** Reads what a fake Meta call asked for. */
-export function describeCall(body: unknown): { model: string; prompt: string; format: string | undefined; texts: string[] } {
+export function describeCall(body: unknown): { model: string; prompt: string; format: string | undefined; texts: string[]; developer: string } {
   const b = body as { model: string; input: { role: string; content: { type: string; text?: string }[] }[]; text?: { format?: { name?: string } } };
   const user = b.input.find((m) => m.role === "user");
   const texts = (user?.content ?? []).filter((p) => p.type === "input_text").map((p) => p.text ?? "");
-  return { model: b.model, prompt: texts[0] ?? "", format: b.text?.format?.name, texts };
+  const dev = b.input.find((m) => m.role === "developer");
+  const developer = (dev?.content ?? []).map((p) => p.text ?? "").join(" ");
+  return { model: b.model, prompt: texts[0] ?? "", format: b.text?.format?.name, texts, developer };
 }

@@ -445,3 +445,42 @@ test("\"all the tins 800\" is asked for each tin, since it names no item", async
   const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "tins", [{ item: 1, name: "Tomato tin" }, { item: 2, name: "Milk tin" }], ["all the tins 800"]);
   expect(r.lines.map((l) => l.price)).toEqual([null, null]);
 });
+
+// QA B9 and B10 on #8: a price expression is parsed as a whole; if it can't be read exactly, ask.
+describe("whole price expressions", () => {
+  async function price(said: string, naira: number) {
+    const spark = scriptedSpark([[setPrice(1, naira, "piece", said)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "chain", [{ item: 1, name: "Generator" }, { item: 2, name: "Rice" }], [said]);
+    return r.lines[0]!.price?.naira ?? null;
+  }
+  for (const [said, naira] of [
+    ["generator na 5 hundred thousand", 500000],
+    ["generator na 2 hundred thousand", 200000],
+    ["generator na five hundred thousand", 500000],
+    ["generator na 3 thousand 5 hundred", 3500],
+    ["generator na 3k 5 hundred", 3500],
+    ["generator na 2 thousand 5 hundred naira", 2500],
+    ["generator na three thousand five hundred", 3500],
+    ["generator na 1 million", 1000000],
+    ["generator na 2 hundred and 50", 250],
+  ] as const) {
+    test(`${JSON.stringify(said)} is ₦${naira.toLocaleString("en-GB")}`, async () => {
+      expect(await price(said, naira)).toBe(naira);
+    });
+  }
+  for (const [said, wrong] of [
+    ["generator na 5 hundred thousand", 500],
+    ["generator na 2 hundred thousand", 200],
+    ["generator na 3 thousand 5 hundred", 3000],
+  ] as const) {
+    test(`${JSON.stringify(said)} is never ₦${wrong}`, async () => {
+      expect(await price(said, wrong)).toBeNull();
+    });
+  }
+  for (const said of ["generator na 1.5 hundred", "generator na 3000 500", "generator na 5 hundred 3 thousand 7"]) {
+    test(`${JSON.stringify(said)} can't be read exactly, so it is asked`, async () => {
+      expect(await price(said, 1500)).toBeNull();
+      expect(await price(said, 3000)).toBeNull();
+    });
+  }
+});

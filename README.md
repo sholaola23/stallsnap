@@ -49,7 +49,7 @@ Check today's spend with `bun src/spend-guard.ts`.
 | `POST /webhook` | Checks `X-Hub-Signature-256` against `APP_SECRET` on the raw body (401 if wrong), drops numbers not in `ALLOWED_NUMBERS`, records each new message id, then answers 200 and handles the messages afterwards |
 | `GET /health` | Answers `ok` |
 
-`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 (0)7700 900123, 2348031234567`. A `(0)` trunk prefix and invisible marks copied from phone contacts are removed. A local number such as `07700900123`, a 0 straight after +44 or +234, or anything that isn't a phone number stops start-up, and the error names the entry by its position and last 4 digits only.
+`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 (0)7700 900123, 2348000000001`. A `(0)` trunk prefix and invisible marks copied from phone contacts are removed. A local number such as `07700900123`, a 0 straight after +44 or +234, or anything that isn't a phone number stops start-up, and the error names the entry by its position and last 4 digits only.
 
 Voice notes are accepted whether Meta sends them as type `voice` or as `audio` with `voice: true`.
 

@@ -27,3 +27,4 @@ Dated record of what was built in this repo. All times are UK time. Everything h
 | Mon 26 Oct | PR 4c, QA round 2 fixes: a decimal with a whole part of 100 or more ("650.50") is unreadable unless k or "thousand" follows; "abeg" no longer counts as a correction word, since in Pidgin it mostly means "please". |
 | Mon 26 Oct | PR 4b: the pixel-limit test patches a small JPEG's header instead of encoding a real 100-megapixel photo, which took 5 s and sometimes hit the test time limit. |
 | Mon 26 Oct | PR 4c: CI only. ffmpeg packages are cached, apt falls back from the Azure mirror, and a newer push cancels the older run on the same branch (the same workflow change as #11, put here so #6's own checks stop failing on the mirror). |
+| Tue 27 Oct | PR 3, Grok review: example and test phone numbers are now obviously fake (`234800000000x`), not realistic Nigerian ones. |

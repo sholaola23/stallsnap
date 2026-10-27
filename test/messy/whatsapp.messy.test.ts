@@ -7,11 +7,11 @@ import { message, payload, sign } from "../../src/whatsapp/test-helpers.ts";
 
 describe("ALLOWED_NUMBERS", () => {
   test("accepts the ways people write international numbers", () => {
-    expect([...parseAllowedNumbers("+44 7700 900123, 0044-7700-900124;(234) 803 123 4567\n2348031234568, ,")]).toEqual([
+    expect([...parseAllowedNumbers("+44 7700 900123, 0044-7700-900124;(234) 800 000 0001\n2348000000002, ,")]).toEqual([
       "447700900123",
       "447700900124",
-      "2348031234567",
-      "2348031234568",
+      "2348000000001",
+      "2348000000002",
     ]);
   });
 
@@ -21,7 +21,7 @@ describe("ALLOWED_NUMBERS", () => {
 
   for (const bad of [
     "07700900123", // local UK format: would never match
-    "08031234567", // local Nigerian format
+    "08000000001", // local Nigerian format
     "44770O900123", // letter O for zero
     "4477OO9OO123",
     "N/A",
@@ -118,15 +118,15 @@ describe("webhook bodies that aren't what we expect", () => {
 describe("QA round 1 on PR #3", () => {
   test("a (0) trunk prefix is dropped, so the trader isn't locked out", () => {
     expect([...parseAllowedNumbers("+44 (0)7700 900123")]).toEqual(["447700900123"]);
-    expect([...parseAllowedNumbers("+234 (0)803 123 4567")]).toEqual(["2348031234567"]);
+    expect([...parseAllowedNumbers("+234 (0)800 000 0001")]).toEqual(["2348000000001"]);
     expect([...parseAllowedNumbers("0044 (0) 7700-900123")]).toEqual(["447700900123"]);
   });
 
   test("invisible direction marks copied from phone contacts are removed", () => {
-    expect([...parseAllowedNumbers("‪+44 7700 900123‬, ‎+234 803 123 4567")]).toEqual(["447700900123", "2348031234567"]);
+    expect([...parseAllowedNumbers("‪+44 7700 900123‬, ‎+234 800 000 0001")]).toEqual(["447700900123", "2348000000001"]);
   });
 
-  for (const bad of ["07700900123", "07700 900123", "44770O900123", "N/A", "+44 (020) 7946 0000", "+44 020 7946 0000", "+234 0803 123 4567"]) {
+  for (const bad of ["07700900123", "07700 900123", "44770O900123", "N/A", "+44 (020) 7946 0000", "+44 020 7946 0000", "+234 0800 000 0001"]) {
     test(`the error for ${JSON.stringify(bad)} shows at most its last 4 digits`, () => {
       let message = "";
       try {

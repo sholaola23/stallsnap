@@ -29,6 +29,8 @@ export function createWebhook(opts: {
   log: JobLog;
   handle: Handler;
   onError?: (msg: Inbound, error: unknown) => void;
+  /** Called, never awaited, for a message to our number from someone who isn't a trader. */
+  onStranger?: (msg: Inbound) => void;
 }): Webhook {
   const { config, log, handle } = opts;
   const onError =
@@ -74,7 +76,10 @@ export function createWebhook(opts: {
     }
     for (const msg of parseWebhook(body)) {
       if (config.phoneNumberId !== undefined && msg.phoneNumberId !== config.phoneNumberId) continue;
-      if (!config.allowed.has(msg.from)) continue;
+      if (!config.allowed.has(msg.from)) {
+        opts.onStranger?.(msg);
+        continue;
+      }
       if (log.accept(msg.id, msg)) enqueue(msg);
     }
     return new Response("OK", { status: 200 });

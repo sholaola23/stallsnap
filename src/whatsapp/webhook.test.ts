@@ -205,3 +205,40 @@ test("unknown paths and methods", async () => {
   expect((await webhook.fetch(new Request("http://localhost/webhook", { method: "PUT" }))).status).toBe(405);
   expect((await webhook.fetch(new Request("http://localhost/health"))).status).toBe(200);
 });
+
+describe("someone who isn't a trader", () => {
+  function withStranger() {
+    const log = new JobLog(join(dir, "joblog.jsonl"));
+    logs.push(log);
+    const got: Inbound[] = [];
+    const strangers: Inbound[] = [];
+    const webhook = createWebhook({ config: testConfig(), log, handle: async (m) => void got.push(m), onStranger: (m) => void strangers.push(m) });
+    return { webhook, got, strangers };
+  }
+  test("is passed to onStranger, never to the trader conversation", async () => {
+    const { webhook, got, strangers } = withStranger();
+    const res = await webhook.fetch(post(payload([message("text", { text: { body: "hi, is the rice fresh?" } }, STRANGER)])));
+    expect(res.status).toBe(200);
+    await webhook.idle();
+    expect(got).toHaveLength(0);
+    expect(strangers.map((m) => m.from)).toEqual([STRANGER]);
+  });
+  test("a trader's message never goes to onStranger", async () => {
+    const { webhook, got, strangers } = withStranger();
+    await webhook.fetch(post(payload([message("text", { text: { body: "rice na 1500" } })])));
+    await webhook.idle();
+    expect(got).toHaveLength(1);
+    expect(strangers).toHaveLength(0);
+  });
+  test("a message to another business number goes nowhere", async () => {
+    const { webhook, strangers } = withStranger();
+    await webhook.fetch(post(payload([message("text", { text: { body: "hi" } }, STRANGER)], {}, "999")));
+    expect(strangers).toHaveLength(0);
+  });
+  test("a bad signature reaches neither", async () => {
+    const { webhook, got, strangers } = withStranger();
+    const res = await webhook.fetch(post(payload([message("text", { text: { body: "hi" } }, STRANGER)]), { signature: "sha256=00" }));
+    expect(res.status).toBe(401);
+    expect(got.length + strangers.length).toBe(0);
+  });
+});

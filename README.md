@@ -46,8 +46,10 @@ Check today's spend with `bun src/spend-guard.ts`.
 | Route | What it does |
 |---|---|
 | `GET /webhook` | Meta's verify handshake: echoes `hub.challenge` (digits only) when `hub.verify_token` matches |
-| `POST /webhook` | Checks `X-Hub-Signature-256` against `APP_SECRET` on the raw body (401 if wrong), drops numbers not in `ALLOWED_NUMBERS`, records each new message id, then answers 200 and handles the messages afterwards |
+| `POST /webhook` | Checks `X-Hub-Signature-256` against `APP_SECRET` on the raw body (401 if wrong), keeps numbers not in `ALLOWED_NUMBERS` out of the trader conversation (see below), records each new message id, then answers 200 and handles the messages afterwards |
 | `GET /health` | Answers `ok` |
+
+Someone who isn't a trader, such as a customer who taps "Message on WhatsApp" on the demo catalogue, gets one short reply: "This is the StallSnap demo stall. StallSnap builds catalogues for market traders on WhatsApp." It is sent at most once per number every 24 hours, with no model calls. `.data/strangers.json` keeps only a hash of the number and the time, never the message.
 
 `ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 (0)7700 900123, 2348000000001`. A `(0)` trunk prefix and invisible marks copied from phone contacts are removed. A local number such as `07700900123`, a 0 straight after +44 or +234, or anything that isn't a phone number stops start-up, and the error names the entry by its position and last 4 digits only.
 

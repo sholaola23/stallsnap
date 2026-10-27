@@ -29,6 +29,8 @@ export const copy = {
   publishing: "Putting your catalogue online...",
   publishButton: "Yes, publish",
   openButton: "Open catalogue",
+  /** The one reply to someone who isn't a trader, such as a customer from the demo catalogue. */
+  stranger: "This is the StallSnap demo stall. StallSnap builds catalogues for market traders on WhatsApp.",
 
   /** One line for each item the trader priced that isn't in the photo, in their own words. */
   notInPhoto(names: readonly string[]): string[] {

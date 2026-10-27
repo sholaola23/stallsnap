@@ -14,10 +14,13 @@ import { realModels } from "./pipeline/models.ts";
 import { DEFAULT_LEDGER_PATH, MAX_CALLS_PER_JOB, SpendGuard } from "./spend-guard.ts";
 import { loadDemoContact, loadWebhookConfig } from "./whatsapp/config.ts";
 import { Conversation } from "./whatsapp/conversation.ts";
+import { copy } from "./whatsapp/copy.ts";
 import { GraphClient } from "./whatsapp/graph.ts";
 import type { Handler } from "./whatsapp/webhook.ts";
 import { MAX_BODY_BYTES, createWebhook } from "./whatsapp/webhook.ts";
+import type { Inbound } from "./whatsapp/parse.ts";
 import { SessionStore } from "./whatsapp/sessions.ts";
+import { StrangerReplies } from "./whatsapp/strangers.ts";
 
 const DATA_DIR = ".data";
 const config = loadWebhookConfig();
@@ -30,12 +33,14 @@ const baseUrl = readEnv("PUBLIC_BASE_URL");
 if (baseUrl && !/^https:\/\/[^\s/]+/.test(baseUrl)) throw new Error("PUBLIC_BASE_URL must start with https://");
 
 let handle: Handler;
+let onStranger: ((msg: Inbound) => void) | undefined;
 if (missing.length === 0) {
   const metaClient = new MetaClient({ apiKey: readEnv("MODEL_API_KEY")!, guard });
+  const graph = new GraphClient({ token: readEnv("WHATSAPP_ACCESS_TOKEN")!, phoneNumberId: readEnv("WHATSAPP_PHONE_NUMBER_ID")! });
   const conversation = new Conversation({
     store: new SessionStore(`${DATA_DIR}/sessions.json`),
     log,
-    messenger: new GraphClient({ token: readEnv("WHATSAPP_ACCESS_TOKEN")!, phoneNumberId: readEnv("WHATSAPP_PHONE_NUMBER_ID")! }),
+    messenger: graph,
     models: realModels(metaClient),
     publish: (s) =>
       publishCatalogue(s, DATA_DIR, baseUrl!, {
@@ -45,12 +50,17 @@ if (missing.length === 0) {
     callsLeft: (jobId) => MAX_CALLS_PER_JOB - guard.callsForJob(jobId),
   });
   handle = (msg) => conversation.handle(msg);
+  const strangers = new StrangerReplies(`${DATA_DIR}/strangers.json`);
+  onStranger = (msg) => {
+    if (!strangers.claim(msg.from)) return;
+    graph.sendText(msg.from, copy.stranger).catch((e) => console.error(`Reply to a non-trader (...${msg.from.slice(-4)}) failed: ${e instanceof Error ? e.message : e}`));
+  };
 } else {
   console.warn(`Not replying to traders until these are set: ${missing.join(", ")}`);
   handle = async (msg) => console.log(`Received ${msg.kind} ${msg.id} from ...${msg.from.slice(-4)}; not replying (settings missing)`);
 }
 
-const webhook = createWebhook({ config, log, handle });
+const webhook = createWebhook({ config, log, handle, onStranger });
 webhook.recover();
 
 // Bodies over the limit are refused at the socket, before they are read.

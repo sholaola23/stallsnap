@@ -90,7 +90,7 @@ const DEVELOPER = [
   "Pidgin number shorthand: \"1.8\" in thousands talk means 1,800; \"3k\" means 3,000; \"five-eight\" for a crate of eggs means 5,800.",
   "When the trader corrects themselves (\"no no, 3,500\"), use the last price.",
   "If the trader gives a range or two possible prices, flag the item and ask.",
-  "A price for a group (\"all the Ankara na 12k each\") applies to each item in the group.",
+  "Only price an item the trader names, followed by one plain price. A group price, a quantity (\"2 for 1000\"), a range or anything unclear: flag the item so the trader is asked.",
   "The unit is what one price buys: a sachet, a tin, a crate, a paint bucket, and so on. Prices are whole naira.",
   "When every item has a price or a question, stop.",
 ].join(" ");

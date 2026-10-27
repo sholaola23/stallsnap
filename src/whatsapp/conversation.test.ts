@@ -186,13 +186,20 @@ describe("things that go wrong", () => {
     expect(h.last().body).toContain("too big");
   });
 
-  test("the spend cap pauses StallSnap and ends the job", async () => {
-    h = harness({ models: { cutouts: async () => Promise.reject(new SpendRefused("daily-cap", "cap")) } });
-    await h.conversation.handle(msg.photo());
-    await h.conversation.handle(msg.voice("rice na 6000"));
-    expect(h.last().body).toBe(copy.paused);
-    expect(h.store.get(TRADER)!.phase).toBe("failed");
-  });
+  for (const [reason, said] of [
+    ["daily-cap", copy.dailyCap],
+    ["job-call-cap", copy.jobTooBig],
+    ["paid-calls-off", copy.paused],
+    ["ledger-unreadable", copy.paused],
+  ] as const) {
+    test(`a ${reason} refusal ends the job with an accurate message`, async () => {
+      h = harness({ models: { cutouts: async () => Promise.reject(new SpendRefused(reason, "cap")) } });
+      await h.conversation.handle(msg.photo());
+      await h.conversation.handle(msg.voice("rice na 6000"));
+      expect(h.last().body).toBe(said);
+      expect(h.store.get(TRADER)!.phase).toBe("failed");
+    });
+  }
 });
 
 describe("restarts", () => {

@@ -16,8 +16,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type JobLog, StepInterrupted } from "../joblog.ts";
+import { MAX_ATTEMPTS } from "../meta/client.ts";
 import { PhotoError, type Photo, preparePhoto } from "../pipeline/photo.ts";
-import type { PricingResult } from "../pipeline/pricing.ts";
+import { MAX_TURNS, type PricingResult } from "../pipeline/pricing.ts";
+import { readSpoken } from "../pipeline/quotes.ts";
 import { VoiceNoteError, type Wav } from "../pipeline/voice.ts";
 import { SpendRefused } from "../spend-guard.ts";
 import { copy } from "./copy.ts";
@@ -31,6 +33,8 @@ export const MAX_CHANGES = 5;
 export const PHOTO_TYPES = { mimeTypes: ["image/jpeg", "image/png"], maxBytes: 5 * 1024 * 1024 };
 export const AUDIO_TYPES = { mimeTypes: ["audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/amr"], maxBytes: 16 * 1024 * 1024 };
 const TYPING_EVERY_MS = 20_000;
+/** Most paid calls each step can make, retries included. A step only starts if the job can afford it. */
+export const WORST_CALLS = { transcript: MAX_ATTEMPTS, pricing: MAX_TURNS * MAX_ATTEMPTS } as const;
 /** Older than this, the trader's 24-hour reply window has probably closed, so no paid work starts. */
 export const MAX_MESSAGE_AGE_MS = 23 * 60 * 60 * 1000;
 const YES_WORD = "(yes|yeah|yep|ok|okay|publish|publish it|correct|confirm|confirmed|na so|confam|go ahead|oya|sure|done|go)";
@@ -71,6 +75,8 @@ export type ConversationOptions = {
   dataDir: string;
   newJobId?: () => string;
   now?: () => number;
+  /** Paid calls the job may still make (SpendGuard's per-job cap minus calls made). */
+  callsLeft?: (jobId: string) => number;
 };
 
 type Input = Session["inputs"][number];
@@ -79,7 +85,7 @@ export class Conversation {
   readonly #o: Required<ConversationOptions>;
 
   constructor(o: ConversationOptions) {
-    this.#o = { newJobId: () => `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, now: () => Date.now(), ...o };
+    this.#o = { newJobId: () => `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, now: () => Date.now(), ...o, callsLeft: o.callsLeft ?? (() => Number.POSITIVE_INFINITY) };
   }
 
   async handle(msg: Inbound): Promise<void> {
@@ -175,8 +181,12 @@ export class Conversation {
     if (msg.kind === "text" && s.phase === "confirming" && isYes(msg.text)) return this.#publish(s, msg.id);
     if (msg.kind !== "text" && msg.kind !== "voice" && msg.kind !== "audio") return;
 
+    // A text with no number in it ("thanks", "ok then") can't change a price, so nothing is paid for.
+    if (msg.kind === "text" && s.phase === "confirming" && !hasNumber(msg.text)) return void (await this.#say(s.trader, copy.changeHint(s.lines)));
     if (s.phase === "confirming" && s.changes >= MAX_CHANGES) return void (await this.#say(s.trader, copy.tooManyChanges));
     if (s.inputs.length >= MAX_INPUTS) return void (await this.#say(s.trader, copy.tooManyChanges));
+    const needed = WORST_CALLS.pricing + (msg.kind === "text" ? 0 : WORST_CALLS.transcript);
+    if (this.#o.callsLeft(s.jobId) < needed) return void (await this.#say(s.trader, copy.tooManyChanges));
     s.inputs.push(msg.kind === "text" ? { messageId: msg.id, kind: "text", text: msg.text } : { messageId: msg.id, kind: "voice", mediaId: msg.mediaId, mimeType: msg.mimeType });
     const back = s.phase;
     if (back === "asking") s.askRounds++;
@@ -221,6 +231,23 @@ export class Conversation {
         store.save(s);
       }
 
+      // The job must be able to afford every paid step still to come, so the per-job cap is never hit mid-way.
+      const unheard = s.inputs.filter((i) => i.kind === "voice" && !(s.heard ?? []).includes(i.messageId)).length;
+      if (this.#o.callsLeft(s.jobId) < WORST_CALLS.pricing + unheard * WORST_CALLS.transcript) {
+        if (firstRun) {
+          s.phase = "failed";
+          store.save(s);
+          log.failJob(s.jobId, "per-job call budget too small for the remaining steps");
+          return void (await this.#say(s.trader, copy.jobTooBig));
+        }
+        s.inputs = s.inputs.filter((i) => i.messageId !== triggerId);
+        if (back === "asking") s.askRounds--;
+        if (back === "confirming") s.changes--;
+        s.phase = back;
+        store.save(s);
+        return void (await this.#say(s.trader, copy.tooManyChanges));
+      }
+
       const said: string[] = [];
       for (const input of s.inputs) {
         if (input.kind === "text") {
@@ -228,8 +255,10 @@ export class Conversation {
           continue;
         }
         const heard = await this.#transcript(s, input);
-        if ("ok" in heard) said.push(heard.ok);
-        else {
+        if ("ok" in heard) {
+          said.push(heard.ok);
+          if (!(s.heard ?? []).includes(input.messageId)) s.heard = [...(s.heard ?? []), input.messageId];
+        } else {
           s.inputs = s.inputs.filter((i) => i.messageId !== input.messageId);
           if (back === "asking") s.askRounds--;
           if (back === "confirming") s.changes--;
@@ -237,6 +266,16 @@ export class Conversation {
           store.save(s);
           return void (await this.#say(s.trader, heard.tell));
         }
+      }
+
+      // A voice note after the list with no number in it ("thank you") changes nothing, so pricing isn't paid for again.
+      const latest = s.inputs.at(-1);
+      if (back === "confirming" && latest?.messageId === triggerId && latest.kind === "voice" && !hasNumber(said.at(-1) ?? "")) {
+        s.inputs = s.inputs.slice(0, -1);
+        s.changes--;
+        s.phase = back;
+        store.save(s);
+        return void (await this.#say(s.trader, copy.changeHint(s.lines)));
       }
 
       const version = s.version + 1;
@@ -323,7 +362,7 @@ export class Conversation {
     this.#o.store.save(s);
     this.#o.log.failJob(s.jobId, e instanceof Error ? e.message : String(e));
     if (!(e instanceof SpendRefused || e instanceof StepInterrupted)) console.error(`Job ${s.jobId} failed:`, e instanceof Error ? e.message : e);
-    await this.#say(s.trader, e instanceof SpendRefused ? copy.paused : copy.failed);
+    await this.#say(s.trader, e instanceof SpendRefused ? refusalMessage(e) : copy.failed);
   }
 
   async #resend(s: Session): Promise<void> {
@@ -342,6 +381,19 @@ export const confirmId = (s: Session) => `publish:${s.jobId}:v${s.version}`;
 function seen(s: Session, id: string): boolean {
   return s.photo?.messageId === id || s.inputs.some((i) => i.messageId === id);
 }
+
+/** What the trader is told when SpendGuard refuses a call, by reason. */
+function refusalMessage(e: SpendRefused): string {
+  if (e.reason === "daily-cap") return copy.dailyCap;
+  if (e.reason === "job-call-cap") return copy.jobTooBig;
+  return copy.paused; // switched off, or the ledger can't be read
+}
+
+/** True when the text has a price-like number in it, even an unreadable one. */
+const hasNumber = (text: string) => {
+  const r = readSpoken(text);
+  return r.prices.length > 0 || r.unreadable.length > 0 || /\d/.test(text);
+};
 
 function traderMessage(e: unknown): string {
   if (e instanceof PhotoError) return e.message;

@@ -108,19 +108,27 @@ bun src/pipeline/try-cutouts.ts stall.jpg
 
 ### Prices: ask, never guess
 
-`src/pipeline/pricing.ts` runs a Muse Spark tool loop over the item list and everything the trader said (voice transcripts and typed text). Spark can only call `set_price(item, price, unit, quote)` or `flag_missing_price(item)`. A price counts only when the quote verifier in `src/pipeline/quotes.ts` agrees, in code:
+`src/pipeline/pricing.ts` runs a Muse Spark tool loop over the item list and everything the trader said (voice transcripts and typed text). Spark can only call `set_price(item, price, unit, quote)` or `flag_missing_price(item)`. A price counts only when the quote verifier in `src/pipeline/quotes.ts` agrees, in code. It is an allow-list: a price is accepted only in one plain shape, and anything else is asked. A question to the trader is fine; a wrong price never is.
 
-| Rule | Asked back instead of priced |
+Each message is split at the listed items' names. A name is said when a run of that item's own name words includes the words that pick it out: "peak milk" or "peak milk 400g" for Peak Milk 400g, "50kg rice", "5 alive". After the name, up to the next item, the words must be:
+
+- optional filler or packaging words ("the", "dey", "crate", "one cup"), an optional "na", "is" or "for", then **one price**;
+- optionally a correction ("no", "sorry", "I mean") and a new price, where the last one wins;
+- then only "naira", "per bag", "for one paint" or filler words.
+
+One price is one number: digits or number words, with an optional N/₦ or "naira" and an optional k, thousand or hundred. `650` is 650, `₦6,000` and `N 6000` are 6,000, `3k`, `3 thousand` and `three thousand` are 3,000, `5 hundred` is 500, `2 thousand 5 hundred`, `2.5k` and `2k5` are 2,500, `1.8` is 1,800, `1.500` is 1,500, and `5-8` on its own is 5,800.
+
+| Asked back instead of priced | Examples |
 |---|---|
-| The quote is the trader's own words, as whole words in one message | a made-up quote; "3000" cut out of "30000" |
-| Code reads exactly one price from the quote, equal to Spark's | "rice dey" (no price), "N/A", "free", 650 read as 650,000, "1,5OO" (letter O), "1000-1200", "2k/2.5k", "500 each, 2000 for five" |
-| The quote sits in this item's part of the message, which names the item before the price | Rice's price used for Beans; "all the tins 800" for a bag of rice |
-| A quantity doesn't come straight before the item | "2 7up 600", "2 rice 6000" (for both, or each?) |
-| It is not one end of a range | "5-8 thousand", "5 to 8k", "two to three thousand", "1,000-1,200", "2000 or 2500" |
-| It is the trader's last word on the item | "3000... no, 3500" quoted as 3000; a later voice note with a new price |
-| No other item has the same name | two items both called "Tomato" |
+| A range or a choice | "5-8 thousand", "5 to 8k", "1,000-1,200", "2000 or 2500", "eggs 30 to 35 thousand" |
+| A quantity | "2 7up 600", "2 bags of rice 6000", "3 tins of peak milk 1500", "rice for two 1000", "rice 500 each" |
+| Anything else after the price | "rice 500, 2000 for five", "rice na 3000 add am to beans" |
+| A number that can't be read | "1,5OO" (letter O), "650.50" |
+| A name that isn't said | "all the tins 800", "the sachet na 100" |
+| Two items with the same name | two items both called "Tomato" |
+| The quote isn't the trader's words for this item, with its latest price | a made-up quote; Rice's price used for Beans; "3000" after "no, 3500" |
 
-Prices are read as traders say them: `650` is 650, `₦6,000` is 6,000, `3k` and `3 thousand` are 3,000, `5 hundred` is 500 and `2 hundred and 50` is 250, `1.8` is 1,800, `1.500` is 1,500, `5-8` on its own is 5,800 (but "5-8 thousand" is a range), and number words ("two thousand five hundred") work. A size inside an item's name ("Peak Milk 400g", "Rice 50kg", "Coke 50cl", "7Up", "Milo 3-in-1") is part of the name, never a price, and isn't needed to say which item unless two items differ only by it. A bare number in a name ("5 Alive", "Eggs 30", "3 Crowns Milk") counts as part of the name only where the whole name is said ("5 alive na 300"); anywhere else it is a number, so "rice na 5 to 8k" stays a range. When a reading is in doubt, the trader is asked: a question is fine, a wrong price is not. "All the tins 800" prices every item sold by the tin.
+A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
 
 A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 

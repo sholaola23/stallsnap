@@ -86,10 +86,11 @@ describe("cleanUp", () => {
     expect(guard.spentToday()).toBeCloseTo(0.01, 10);
   });
 
-  test("no image returned falls back and isn't charged", async () => {
+  // Grok review on PR #10: an answered call is always charged, so the ledger never under-counts.
+  test("no image returned falls back and is still charged $0.01", async () => {
     const { client: c } = client({ created: 1, data: [] });
     expect(await cleanUp(c, "j", cutout)).toMatchObject({ cleaned: false, reason: "no image returned" });
-    expect(guard.spentToday()).toBe(0);
+    expect(guard.spentToday()).toBeCloseTo(0.01, 9);
   });
 
   test("the request turns off search and shell, sends no preservation fields, and names what must stay", async () => {

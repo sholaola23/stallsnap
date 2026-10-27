@@ -184,18 +184,7 @@ describe("QA round 1 on PR #6", () => {
     ["1.500 is 1,500", { said: "rice na 1.500", calls: [setPrice(1, 1500, "bag", "rice na 1.500")], expect: { 1: 1500 } }],
     ["1.8 is 1,800", { said: "rice na 1.8", calls: [setPrice(1, 1800, "bag", "rice na 1.8")], expect: { 1: 1800 } }],
     ["3k is 3,000", { said: "rice na 3k", calls: [setPrice(1, 3000, "bag", "rice na 3k")], expect: { 1: 3000 } }],
-    [
-      "all the tins 800 for two tins",
-      {
-        said: "all the tins 800",
-        items: [
-          { item: 1, name: "Tomato tin" },
-          { item: 2, name: "Milk tin" },
-        ],
-        calls: [setPrice(1, 800, "tin", "all the tins 800"), setPrice(2, 800, "tin", "all the tins 800")],
-        expect: { 1: 800, 2: 800 },
-      },
-    ],
+
     ["two items, two prices, one message", { said: "rice na 3000, beans na 1500", calls: [setPrice(1, 3000, "bag", "rice na 3000"), setPrice(2, 1500, "cup", "beans na 1500")], expect: { 1: 3000, 2: 1500 } }],
     ["a price in words", { said: "rice na two thousand five hundred", calls: [setPrice(1, 2500, "bag", "rice na two thousand five hundred")], expect: { 1: 2500 } }],
   ];
@@ -385,4 +374,74 @@ describe("digits with hundred", () => {
   test("a range with hundreds is still a range: \"5 to 6 hundred\"", () => {
     expect(readSpoken("rice na 5 to 6 hundred").prices).toEqual([]);
   });
+});
+
+// Allow-list grammar (coordinator, round 6): a price counts only in one plain shape; everything else is asked.
+describe("allow-list grammar", () => {
+  async function price(names: string[], said: string | string[], item: number, naira: number, quote: string) {
+    const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "grammar", names.map((name, i) => ({ item: i + 1, name })), Array.isArray(said) ? said : [said]);
+    return r.lines[item - 1]!.price?.naira ?? null;
+  }
+  // Digit and multiplier phrasing as a whole (B8 and the coordinator's list).
+  for (const [said, naira] of [
+    ["rice na 5 hundred", 500],
+    ["rice na 5 hundred naira", 500],
+    ["rice na 2 thousand", 2000],
+    ["rice na 2 thousand 5 hundred", 2500],
+    ["rice na 2k5", 2500],
+    ["rice na 2.5k", 2500],
+    ["rice na two thousand five hundred", 2500],
+    ["rice na N500", 500],
+    ["rice na ₦ 500", 500],
+    ["rice na N 500", 500],
+    ["rice 3000", 3000],
+    ["rice is 3000 naira per bag", 3000],
+    ["rice na 3000... no, 3500", 3500],
+  ] as const) {
+    test(`priced: ${JSON.stringify(said)} is ₦${naira}`, async () => {
+      expect(await price(["Rice", "Beans"], said, 1, naira, said)).toBe(naira);
+    });
+  }
+  test("a letter O inside a number stays refused: \"rice na 1,5OO\"", async () => {
+    expect(await price(["Rice", "Beans"], "rice na 1,5OO", 1, 1500, "rice na 1,5OO")).toBeNull();
+  });
+  test("a list is split by item names: \"rice 3000 beans 3500\" prices both", async () => {
+    expect(await price(["Rice", "Beans"], "rice 3000 beans 3500", 1, 3000, "rice 3000")).toBe(3000);
+    expect(await price(["Rice", "Beans"], "rice 3000 beans 3500", 2, 3500, "beans 3500")).toBe(3500);
+  });
+  // QA round 4 on PR #6: shapes that must be asked back.
+  for (const [names, said, item, naira, quote] of [
+    [["Rice", "Eggs 30"], "eggs 30 to 35 thousand", 2, 35000, "35 thousand"],
+    [["7Up", "Coke"], "two 7up 600", 1, 600, "7up 600"],
+    [["Rice", "Beans"], "2 bags of rice 6000", 1, 6000, "rice 6000"],
+    [["Peak Milk", "Rice"], "3 tins of peak milk 1500", 1, 1500, "peak milk 1500"],
+    [["Rice", "5 Alive"], "2 5 alive 1400", 2, 1400, "5 alive 1400"],
+    [["Rice", "Bread N500"], "rice n500 to n700", 1, 700, "n700"],
+    [["Rice", "Biscuit 2k"], "rice 2k to 3k", 1, 3000, "3k"],
+    [["Rice", "Beans"], "rice 500 each", 1, 500, "rice 500 each"],
+    [["Rice", "Beans"], "rice for two 1000", 1, 1000, "rice for two 1000"],
+    [["Rice", "Beans"], "rice 500, 2000 for five", 1, 2000, "2000 for five"],
+    [["Rice", "Beans"], "rice na 5 to 6 hundred", 1, 600, "6 hundred"],
+  ] as const) {
+    test(`asked: ${JSON.stringify(said)} at ${naira}`, async () => {
+      expect(await price([...names], said, item, naira, quote)).toBeNull();
+    });
+  }
+  test("a price-shaped name is a name only where the item is said: \"bread n500 na 700\", \"biscuit 2k na 300\"", async () => {
+    expect(await price(["Rice", "Bread N500"], "bread n500 na 700", 2, 700, "bread n500 na 700")).toBe(700);
+    expect(await price(["Rice", "Biscuit 2k"], "biscuit 2k na 300", 2, 300, "biscuit 2k na 300")).toBe(300);
+    expect(await price(["Rice", "Bread N500"], "bread n500", 2, 500, "bread n500")).toBeNull();
+  });
+  test("the latest message decides: a later unclear price for the item asks again", async () => {
+    expect(await price(["Rice", "Beans"], ["rice na 3000", "rice na 3000 to 3500"], 1, 3000, "rice na 3000")).toBeNull();
+  });
+});
+
+// Changed with the allow-list grammar (reported to the coordinator): a group price names no item,
+// so "all the tins 800" used to price both tins and is now asked for each.
+test("\"all the tins 800\" is asked for each tin, since it names no item", async () => {
+  const spark = scriptedSpark([[setPrice(1, 800, "tin", "all the tins 800"), setPrice(2, 800, "tin", "all the tins 800")], "done"]);
+  const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "tins", [{ item: 1, name: "Tomato tin" }, { item: 2, name: "Milk tin" }], ["all the tins 800"]);
+  expect(r.lines.map((l) => l.price)).toEqual([null, null]);
 });

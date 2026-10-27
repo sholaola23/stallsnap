@@ -1,21 +1,24 @@
 // The quote verifier: decides, in code, whether what the trader said supports
 // one price for one item. Spark's set_price call is accepted only when this
-// says yes. Anything unclear is a no, and the trader is asked.
+// says yes. It is an allow-list: a price counts only when the trader's words
+// take one plain shape, and anything else is asked about. A question to the
+// trader is fine; a wrong price never is.
 //
-// A quote is accepted when:
-// 1. it appears as whole words in one message the trader sent;
-// 2. code reads exactly one price from it, equal to the price Spark set
-//    (digits or English number words; "650" is 650, "1.8" and "3k" are
-//    thousands, "1.500" is 1,500, "5-8" is 5,800); a number with a letter in
-//    it, a range or two prices is unreadable;
-// 3. it sits in this item's stretch of speech, which runs up to a mention of
-//    another item, and that stretch names this item (or says "all the tins"
-//    for an item sold by the tin);
-// 4. its price is the trader's last word on the item: any other price in the
-//    stretch must come before it with a correction ("no", "sorry") between,
-//    and no later message prices the item again;
-// 5. no other item has the same name, and the quote wasn't already used for
-//    another item unless the stretch has a group word ("all", "each").
+// Each message is split at the listed items' names. A name is said when a run
+// of that item's own name words includes all the words that pick it out
+// ("peak milk", "50kg rice", "5 alive"). The words after it, up to the next
+// item, must be exactly:
+//   [filler words] [na | is | for | at | =] PRICE
+//   then any number of: [filler] CORRECTION... [na | is ...] PRICE   (the last one wins)
+//   then only "naira", "per <word>" or filler words
+// PRICE is one number: digits or number words, an optional N/₦ or "naira",
+// and an optional k / thousand / hundred ("5 hundred", "2 thousand 5 hundred",
+// "2.5k", "2k5", "1.8" for 1,800). A number with a letter in it is unreadable.
+// A number before the first item, a range, "each", "bags of", two prices
+// without a correction, or any other shape makes the item's price unclear.
+//
+// Spark's quote must sit inside the item's latest priced part of the
+// conversation and give exactly that price.
 
 const NUMBER_WORDS: Record<string, number> = {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
@@ -26,7 +29,6 @@ const SCALES: Record<string, number> = { hundred: 100, thousand: 1000, tousand: 
 const THOUSAND_WORDS = new Set(["k", "thousand", "tousand"]);
 // Not "abeg": in Pidgin it is mostly "please" ("abeg buy"), so it can't mark a correction.
 const CORRECTIONS = new Set(["no", "sorry", "mean", "correction", "wait"]);
-const GROUP_WORDS = new Set(["all", "each", "every", "both"]);
 const RANGE_WORDS = new Set(["to", "or", "abi", "between"]);
 /** Words that describe packaging or size, not which product an item is. */
 const GENERIC = new Set([
@@ -207,28 +209,6 @@ export function itemKeys(items: readonly QuoteItem[]): Map<number, string[]> {
   return keys;
 }
 
-/** Token positions where the item is mentioned: all its key words within a few words of each other. */
-function mentions(tokens: string[], key: string[]): number[] {
-  if (key.length === 0) return [];
-  const words = tokens.map(singular);
-  const out: number[] = [];
-  for (let p = 0; p < words.length; p++) {
-    if (words[p] !== key[0] && !key.includes(words[p]!)) continue;
-    const window = words.slice(Math.max(0, p - 4), p + 5);
-    if (key.every((k) => window.includes(k)) && !out.some((q) => Math.abs(q - p) <= 4)) out.push(p);
-  }
-  return out;
-}
-
-function findTokens(hay: string[], needle: string[]): number {
-  if (needle.length === 0) return -1;
-  outer: for (let i = 0; i + needle.length <= hay.length; i++) {
-    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
-    return i;
-  }
-  return -1;
-}
-
 export type Verdict = { ok: true; message: number; at: number } | { ok: false; reason: string };
 
 export type QuoteContext = {
@@ -238,6 +218,134 @@ export type QuoteContext = {
   used: Map<string, number>;
 };
 
+const CONNECTORS = new Set(["na", "is", "for", "at", "be"]);
+/** Words that may sit around a price without changing it. */
+const FILLERS = new Set(["the", "a", "my", "dey", "don", "now", "o", "oh", "abeg", "sef", "e", "just", "only", "it", "its", "price"]);
+/** Packaging and size words: "rice crate na 5-8", "one cup", "for one paint". */
+const PACK = new Set([...GENERIC].filter((w) => !["the", "and", "of", "with", "for", "per", "one", "new"].includes(w)));
+const ONE = new Set(["one", "1", "a", "an"]);
+const isNumberToken = (w: string) => /\d/.test(w) || w in NUMBER_WORDS || w in SCALES;
+
+/** One price expression starting at `i`: its value and the position after it, or undefined. */
+function parsePrice(tokens: string[], i: number): { value: number; end: number } | undefined {
+  let j = i;
+  if (tokens[j] === "n" && /^\d/.test(tokens[j + 1] ?? "")) j++; // "N 500"
+  const t = tokens[j];
+  if (t === undefined) return undefined;
+  let value: number;
+  const k5 = /^n?(\d{1,3})k(\d)$/.exec(t); // "2k5" is 2,500
+  if (k5) {
+    value = Number(k5[1]) * 1000 + Number(k5[2]) * 100;
+    j++;
+  } else {
+    const h = hundreds(tokens, j);
+    const d = h ?? digitValue(t, tokens[j + 1]);
+    if (d === "unreadable") return undefined;
+    if (d) {
+      value = d.value;
+      j += d.consumed;
+      // "2 thousand 5 hundred"
+      if (THOUSAND_WORDS.has(tokens[j - 1]!)) {
+        const more = hundreds(tokens, j);
+        if (more && more.value < 1000) {
+          value += more.value;
+          j += more.consumed;
+        }
+      }
+    } else {
+      const w = wordValue(tokens, j);
+      if (!w || (w.value < 10 && w.consumed === 1)) return undefined;
+      value = w.value;
+      j += w.consumed;
+    }
+  }
+  if (tokens[j] === "naira") j++;
+  return { value, end: j };
+}
+
+type Segment = { item: number; start: number; end: number; price?: { value: number; from: number; to: number }; unclear?: string };
+
+/** Splits one message at the listed items' names, and reads each item's price if it has the one plain shape. */
+export function segments(text: string, items: readonly QuoteItem[]): { tokens: string[]; segments: Segment[] } {
+  const tokens = tokenize(text);
+  const words = tokens.map(singular);
+  const keys = itemKeys(items);
+  const nameSets = new Map(items.map((it) => [it.item, new Set(tokenize(it.name).map(singular))]));
+  // Find name runs: the longest run of one item's own name words that contains all its key words.
+  const runs: { item: number; start: number; end: number }[] = [];
+  for (let p = 0; p < words.length; ) {
+    let best: { item: number; end: number } | undefined;
+    let tie = false;
+    for (const it of items) {
+      const set = nameSets.get(it.item)!;
+      let e = p;
+      while (e < words.length && set.has(words[e]!)) e++;
+      const run = words.slice(p, e);
+      if (e === p || !keys.get(it.item)!.every((k) => run.includes(k))) continue;
+      if (!best || e > best.end) (best = { item: it.item, end: e }), (tie = false);
+      else if (e === best.end) tie = true;
+    }
+    if (best && !tie) {
+      runs.push({ item: best.item, start: p, end: best.end });
+      p = best.end;
+    } else p++;
+  }
+  const out: Segment[] = runs.map((r, n) => ({ item: r.item, start: r.start, end: n + 1 < runs.length ? runs[n + 1]!.start : tokens.length }));
+  out.forEach((seg, n) => {
+    const nameEnd = runs[n]!.end;
+    const body = tokens.slice(nameEnd, seg.end);
+    if (!body.some(isNumberToken)) return; // nothing priced here ("rice dey")
+    if (n === 0 && tokens.slice(0, seg.start).some(isNumberToken)) return void (seg.unclear = "a number before the item (a quantity?) makes the price unclear");
+    let j = nameEnd;
+    // Filler and packaging words, and "one cup" / "a bag" (a quantity of one is never unclear).
+    const skip = () => {
+      for (;;) {
+        if (j < seg.end && (FILLERS.has(tokens[j]!) || PACK.has(singular(tokens[j]!)))) j++;
+        else if (j + 1 < seg.end && ONE.has(tokens[j]!) && PACK.has(singular(tokens[j + 1]!))) j += 2;
+        else return;
+      }
+    };
+    skip();
+    if (CONNECTORS.has(tokens[j]!)) j++;
+    skip();
+    let price = parsePrice(tokens, j);
+    if (!price || price.end > seg.end) return void (seg.unclear = "the words after the item aren't one plain price");
+    let found = { value: price.value, from: j, to: price.end };
+    j = price.end;
+    for (;;) {
+      skip();
+      if (!CORRECTIONS.has(tokens[j]!) && !(tokens[j] === "i" && tokens[j + 1] === "mean")) break;
+      while (j < seg.end && (CORRECTIONS.has(tokens[j]!) || tokens[j] === "i")) j++;
+      skip();
+      if (CONNECTORS.has(tokens[j]!)) j++;
+      skip();
+      price = parsePrice(tokens, j);
+      if (!price || price.end > seg.end) return void (seg.unclear = "a correction without one plain new price");
+      found = { value: price.value, from: j, to: price.end };
+      j = price.end;
+    }
+    // Only "naira", "per <unit>", "for one <unit>" and filler or packaging words may follow.
+    while (j < seg.end) {
+      if (FILLERS.has(tokens[j]!) || PACK.has(singular(tokens[j]!)) || tokens[j] === "naira") j++;
+      else if (tokens[j] === "per" && j + 1 < seg.end && !isNumberToken(tokens[j + 1]!)) j += 2;
+      else if (tokens[j] === "for" && j + 2 < seg.end + 1 && ONE.has(tokens[j + 1]!) && tokens[j + 2] !== undefined && j + 2 < seg.end && !isNumberToken(tokens[j + 2]!)) j += 3;
+      else return void (seg.unclear = `"${tokens.slice(found.to, seg.end).join(" ")}" after the price makes it unclear`);
+    }
+    seg.price = found;
+  });
+  return { tokens, segments: out };
+}
+
+function findAll(hay: string[], needle: string[]): number[] {
+  const out: number[] = [];
+  if (needle.length === 0) return out;
+  outer: for (let i = 0; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    out.push(i);
+  }
+  return out;
+}
+
 export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, quote: string): Verdict {
   const no = (reason: string): Verdict => ({ ok: false, reason });
   const keys = itemKeys(ctx.items);
@@ -245,77 +353,26 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   if (ctx.items.some((o) => o.item !== item.item && keys.get(o.item)!.join(" ") === key.join(" "))) {
     return no("another item has the same name, so the trader must say which one");
   }
+  const q = tokenize(quote);
+  if (q.length === 0) return no("quote must be the trader's exact words from the transcript");
+  const parsed = ctx.said.map((t) => segments(t, ctx.items));
+  if (!parsed.some((p) => findAll(p.tokens, q).length > 0)) return no("quote must be the trader's exact words from the transcript");
 
-  const q = readSpoken(quote, ctx.items);
-  if (q.tokens.length === 0) return no("quote must be the trader's exact words from the transcript");
-  if (q.unreadable.length > 0) return no("the number in the quote can't be read safely (a letter inside a number)");
-  const values = [...new Set(q.prices.map((p) => p.value))];
-  if (values.length === 0) return no("the quote has no price in it; quote the trader's words that say the price");
-  if (values.length > 1) return no("the quote has more than one price; a range or a choice is not a price, so ask the trader");
-  if (values[0] !== naira) return no(`price_naira ${naira} doesn't match the price in the quote (${values[0]})`);
-
-  const messages = ctx.said.map((t) => readSpoken(t, ctx.items));
-  let m = -1;
-  let at = -1;
-  for (let i = messages.length - 1; i >= 0 && m < 0; i--) {
-    const found = findTokens(messages[i]!.tokens, q.tokens);
-    if (found >= 0) (m = i), (at = found);
+  // The trader's latest words on this item that have a number in them decide.
+  for (let m = parsed.length - 1; m >= 0; m--) {
+    const segs = parsed[m]!.segments.filter((s) => s.item === item.item && (s.price || s.unclear));
+    if (segs.length === 0) continue;
+    if (segs.length > 1) return no("the trader named this item twice with prices in one message; ask which is right");
+    const seg = segs[0]!;
+    if (seg.unclear) return no(`${seg.unclear}, so ask the trader`);
+    const p = seg.price!;
+    if (p.value !== naira) return no(`the trader's price for this item is ${p.value}, not ${naira}`);
+    const inside = findAll(parsed[m]!.tokens, q).filter((at) => at >= seg.start && at + q.length <= seg.end && at <= p.from && at + q.length >= p.to);
+    if (inside.length === 0) return no("quote the trader's own words for this item, including its latest price");
+    const at = inside[0]!;
+    const prior = ctx.used.get(`${m}:${at}`);
+    if (prior !== undefined && prior !== item.item) return no("that quote was already used for another item");
+    return { ok: true, message: m, at };
   }
-  if (m < 0) return no("quote must be the trader's exact words from the transcript");
-  const msg = messages[m]!;
-  const end = at + q.tokens.length;
-
-  // This item's stretch runs from where the trader names it (before the price,
-  // or inside the quote) to the next item they name after the price.
-  const quoted = msg.prices.find((p) => p.at >= at && p.at < end)!;
-  const others = ctx.items.filter((o) => o.item !== item.item).flatMap((o) => mentions(msg.tokens, keys.get(o.item)!));
-  const unitWord = item.unit ? singular(item.unit.split(" ")[0]!) : undefined;
-  let from = Math.max(-1, ...mentions(msg.tokens, key).filter((p) => p < end));
-  if (from < 0) {
-    // "all the tins 800": a group word, then the item's unit, before the price.
-    const g = msg.tokens.findIndex((w, i) => GROUP_WORDS.has(w) && i <= quoted.at);
-    const unitSaid = unitWord !== undefined && g >= 0 && msg.tokens.slice(g, quoted.at).map(singular).includes(unitWord);
-    if (!unitSaid) return no("the quote's part of the message doesn't name this item");
-    from = g;
-  }
-  if (others.some((p) => p > from && p <= quoted.at)) return no("the quote is about another item");
-  const to = Math.min(msg.tokens.length, ...others.filter((p) => p > quoted.at));
-  const stretch = msg.tokens.slice(from, to);
-  const group = stretch.some((w) => GROUP_WORDS.has(w));
-  if (msg.unreadable.some((p) => p >= from && p < to)) return no("a number near the quote can't be read safely, so ask the trader");
-
-  // "2 7up 600", "2 rice 6000": a number straight before the item (not part of its name) may be a quantity,
-  // so the price might be for all of them or each one. That's for the trader to say.
-  // A number after "na" is the previous item's price. Digits only: number words run on across sentences
-  // once punctuation is gone ("... one one. Milo strip").
-  const before = msg.tokens[from - 1];
-  if (before !== undefined && /^\d+$/.test(before) && !msg.masked.includes(from - 1) && msg.tokens[from - 2] !== "na") {
-    return no("a quantity before the item makes the price unclear (for all of them, or each?), so ask the trader");
-  }
-
-  // The quote's price must be the trader's last word on the item.
-  const near = msg.prices.filter((p) => p.at >= from && p.at < to && p.value !== quoted.value);
-  if (near.some((p) => p.at > quoted.at)) return no("the trader gave another price for this item after the quote; ask which is right");
-  const lastOther = Math.max(-1, ...near.map((p) => p.at));
-  if (lastOther >= 0 && !msg.tokens.slice(lastOther + 1, quoted.at).some((w) => CORRECTIONS.has(w))) {
-    return no("the trader gave two prices for this item; a range or a choice is not a price, so ask the trader");
-  }
-  if (stretch.some((w, i) => RANGE_WORDS.has(w) && msg.prices.some((p) => p.at >= from && p.at < to && Math.abs(p.at - (from + i)) <= 2 && p.value !== quoted.value))) {
-    return no("a range or a choice is not a price, so ask the trader");
-  }
-  for (let i = m + 1; i < messages.length; i++) {
-    const later = messages[i]!;
-    for (const p of mentions(later.tokens, key)) {
-      const otherAfter = ctx.items.filter((o) => o.item !== item.item).flatMap((o) => mentions(later.tokens, keys.get(o.item)!)).filter((x) => x > p);
-      const stop = Math.min(later.tokens.length, ...otherAfter);
-      if (later.prices.some((pr) => pr.at > p && pr.at < stop) || later.unreadable.some((u) => u > p && u < stop)) {
-        return no("a later message prices this item again; use the latest");
-      }
-    }
-  }
-
-  const span = `${m}:${at}`;
-  const prior = ctx.used.get(span);
-  if (prior !== undefined && prior !== item.item && !group) return no("that quote was already used for another item");
-  return { ok: true, message: m, at };
+  return no("the trader hasn't said a price for this item by name; ask the trader");
 }

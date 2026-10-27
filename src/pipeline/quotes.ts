@@ -46,6 +46,7 @@ const singular = (w: string) => (w.length > 3 && w.endsWith("es") && !w.endsWith
 /** Lower-cased words, keeping numbers whole: "₦1,500" -> "1500", "1.8" stays, "5-8" stays, "1000-1200" splits. */
 export function tokenize(text: string): string[] {
   const t = text
+    .replace(/(^|\n)[ \t]*\d{1,2}[.)](?=\s)/g, "$1") // "1. Rice: 1500": a list number, never a quantity
     .toLowerCase()
     .replace(/[​-‍⁠﻿]/g, "")
     .replace(/₦/g, " ")
@@ -193,17 +194,20 @@ function maskNames(tokens: string[], items: readonly { name: string }[]): Set<nu
   return masked;
 }
 
+/** A word as it counts in a name: singular, and number words as digits, so "five alive" is 5 Alive. */
+const nameWord = (w: string) => (w in NUMBER_WORDS ? String(NUMBER_WORDS[w]) : singular(w));
+
 export type QuoteItem = { item: number; name: string; unit?: string };
 
 /** The words that pick out an item, with packaging words added only where two items would otherwise look the same. */
 export function itemKeys(items: readonly QuoteItem[]): Map<number, string[]> {
   // Sizes and numbers in a name ("400g", "50kg") aren't needed to say which item, unless two items differ only by them.
-  const distinctive = (name: string) => [...new Set(tokenize(name).map(singular).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/\d/.test(w)))];
+  const distinctive = (name: string) => [...new Set(tokenize(name).map(nameWord).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/\d/.test(w)))];
   const keys = new Map<number, string[]>();
   for (const it of items) {
     let key = distinctive(it.name);
     const clash = items.some((o) => o.item !== it.item && distinctive(o.name).join(" ") === key.join(" "));
-    if (clash || key.length === 0) key = [...new Set(tokenize(it.name).map(singular).filter((w) => w.length >= 2 && w !== "the"))];
+    if (clash || key.length === 0) key = [...new Set(tokenize(it.name).map(nameWord).filter((w) => w.length >= 2 && w !== "the"))];
     keys.set(it.item, key);
   }
   return keys;
@@ -322,9 +326,9 @@ type Segment = { item: number; start: number; end: number; price?: { value: numb
 /** Splits one message at the listed items' names, and reads each item's price if it has the one plain shape. */
 export function segments(text: string, items: readonly QuoteItem[]): { tokens: string[]; segments: Segment[] } {
   const tokens = tokenize(text);
-  const words = tokens.map(singular);
+  const words = tokens.map(nameWord);
   const keys = itemKeys(items);
-  const nameSets = new Map(items.map((it) => [it.item, new Set(tokenize(it.name).map(singular))]));
+  const nameSets = new Map(items.map((it) => [it.item, new Set(tokenize(it.name).map(nameWord))]));
   // Find name runs: the longest run of one item's own name words that contains all its key words.
   const runs: { item: number; start: number; end: number }[] = [];
   for (let p = 0; p < words.length; ) {

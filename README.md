@@ -177,12 +177,14 @@ Each message is split at the listed items' names. A name is said when a run of t
 - optionally a correction ("no", "sorry", "I mean") and a new price, where the last one wins;
 - then only "naira", "per bag", "for one paint" or filler words.
 
-One price is one number: digits or number words, with an optional N/₦ or "naira" and an optional k, thousand or hundred. `650` is 650, `₦6,000` and `N 6000` are 6,000, `3k`, `3 thousand` and `three thousand` are 3,000, `5 hundred` is 500, `5 hundred thousand` is 500,000, `2 thousand 5 hundred`, `2.5k` and `2k5` are 2,500, `1.8` is 1,800, `1.500` is 1,500, and `5-8` on its own is 5,800.
+One price is one number: digits or number words, with an optional N/₦ or "naira" and an optional k, thousand or hundred. `650` is 650, `₦6,000` and `N 6000` are 6,000, `3k`, `3 thousand` and `three thousand` are 3,000, `5 hundred` is 500, `5 hundred thousand` is 500,000, `2 thousand 5 hundred`, `2.5k` and `2k5` are 2,500, `1.8` is 1,800, `1.500` is 1,500, and `5-8` on its own is 5,800. A chain must be exact: million, then thousand, each once, and a part after a multiplier must use hundred.
 
 | Asked back instead of priced | Examples |
 |---|---|
 | A range or a choice | "5-8 thousand", "5 to 8k", "1,000-1,200", "2000 or 2500", "eggs 30 to 35 thousand" |
-| A quantity | "2 7up 600", "2 bags of rice 6000", "3 tins of peak milk 1500", "rice for two 1000", "rice 500 each" |
+| Two prices run together | "2k 3k", "5 hundred 6 hundred", "1 hundred hundred", "3 thousand 5", "3k 500" |
+| A price before a name, or two names before one price | "rice, beans. 3000 beans, 1500 garri", "rice dey, 3000 beans", "rice and beans na 3000" |
+| A quantity | "rice 3000, 2 beans 3500" (Beans), "2 7up 600", "2 bags of rice 6000", "3 tins of peak milk 1500", "rice for two 1000", "rice 500 each" |
 | Anything else after the price | "rice 500, 2000 for five", "rice na 3000 add am to beans" |
 | A number that can't be read | "1,5OO" (letter O), "650.50" |
 | A name that isn't said | "all the tins 800", "the sachet na 100" |

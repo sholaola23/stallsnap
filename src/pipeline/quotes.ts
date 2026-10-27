@@ -121,7 +121,7 @@ export function readSpoken(text: string, items: readonly { name: string }[] = []
       i++;
       continue;
     }
-    const d = digitValue(tokens[i]!, tokens[i + 1]);
+    const d = hundreds(tokens, i) ?? digitValue(tokens[i]!, tokens[i + 1]);
     if (d === "unreadable") {
       unreadable.push(i);
       i++;
@@ -156,6 +156,25 @@ export function readSpoken(text: string, items: readonly { name: string }[] = []
   prices = prices.filter((p) => !unreadable.includes(p.at));
   unreadable.sort((x, y) => x - y);
   return { tokens, prices, unreadable, masked: [...masked].sort((x, y) => x - y) };
+}
+
+/** "5 hundred" is 500, and "2 hundred and 50" or "2 hundred and fifty" is 250. Only a whole number under 100 counts. */
+function hundreds(tokens: string[], i: number): { value: number; consumed: number } | undefined {
+  const t = tokens[i]!;
+  if (!/^\d{1,2}$/.test(t) || tokens[i + 1] !== "hundred") return undefined;
+  let value = Number(t) * 100;
+  let consumed = 2;
+  if (tokens[i + 2] === "and") {
+    const rest = tokens[i + 3];
+    const digit = rest !== undefined && /^\d{1,2}$/.test(rest) ? Number(rest) : undefined;
+    const word = digit === undefined ? wordValue(tokens, i + 3) : undefined;
+    const add = digit ?? (word && word.value < 100 ? word.value : undefined);
+    if (add !== undefined) {
+      value += add;
+      consumed += 2 + (word ? word.consumed - 1 : 0);
+    }
+  }
+  return { value, consumed };
 }
 
 function maskNames(tokens: string[], items: readonly { name: string }[]): Set<number> {

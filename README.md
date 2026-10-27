@@ -49,13 +49,13 @@ Check today's spend with `bun src/spend-guard.ts`.
 | `POST /webhook` | Checks `X-Hub-Signature-256` against `APP_SECRET` on the raw body (401 if wrong), drops numbers not in `ALLOWED_NUMBERS`, records each new message id, then answers 200 and handles the messages afterwards |
 | `GET /health` | Answers `ok` |
 
-`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 (0)7700 900123, 2348031234567`. A `(0)` trunk prefix and invisible marks copied from phone contacts are removed. A local number such as `07700900123`, a 0 straight after +44 or +234, or anything that isn't a phone number stops start-up, and the error names the entry by its position and last 4 digits only.
+`ALLOWED_NUMBERS` takes international numbers separated by commas, for example `+44 (0)7700 900123, 2348000000001`. A `(0)` trunk prefix and invisible marks copied from phone contacts are removed. A local number such as `07700900123`, a 0 straight after +44 or +234, or anything that isn't a phone number stops start-up, and the error names the entry by its position and last 4 digits only.
 
 Voice notes arrive as type `audio` with `voice: true` (Meta's audio webhook reference). Type `voice` is accepted too.
 
 ### Sending
 
-`src/whatsapp/graph.ts` sends through the Graph API v26.0 with `WHATSAPP_ACCESS_TOKEN` (a system-user token) and `WHATSAPP_PHONE_NUMBER_ID`: plain text, a message with one reply button, a message with one link button, and the "typing..." indicator. It keeps messages to one person 6 seconds apart (WhatsApp's pair rate limit) and retries rate limits, Meta server errors and network failures after 1, 4 and 16 seconds. It downloads photos and voice notes by media id, checking type, size and hash, and fetches a fresh URL once if the 5-minute URL has expired.
+`src/whatsapp/graph.ts` sends through the Graph API v26.0 with `WHATSAPP_ACCESS_TOKEN` (a system-user token) and `WHATSAPP_PHONE_NUMBER_ID`: plain text, a message with one reply button, a message with one link button, and the "typing..." indicator. It keeps messages to one person 6 seconds apart (WhatsApp's pair rate limit) and retries rate limits, Meta server errors and network failures after 1, 4 and 16 seconds. It downloads photos and voice notes by media id, checking type, size and hash, and fetches a fresh URL once if the 5-minute URL has expired. Every Graph call gives up after 30 seconds and every download after 60, and the access token is only sent to Meta's own media hosts (`lookaside.fbsbx.com`, `*.fbcdn.net`, `*.whatsapp.net` and similar, over https on the standard port).
 
 ### The conversation
 
@@ -140,10 +140,11 @@ bun src/pipeline/try-cutouts.ts stall.jpg
 | The quote is the trader's own words, as whole words in one message | a made-up quote; "3000" cut out of "30000" |
 | Code reads exactly one price from the quote, equal to Spark's | "rice dey" (no price), "N/A", "free", 650 read as 650,000, "1,5OO" (letter O), "1000-1200", "2k/2.5k", "500 each, 2000 for five" |
 | The quote sits in this item's part of the message, which names the item before the price | Rice's price used for Beans; "all the tins 800" for a bag of rice |
+| It is not one end of a range | "5-8 thousand", "5 to 8k", "two to three thousand", "1,000-1,200", "2000 or 2500" |
 | It is the trader's last word on the item | "3000... no, 3500" quoted as 3000; a later voice note with a new price |
 | No other item has the same name | two items both called "Tomato" |
 
-Prices are read as traders say them: `650` is 650, `₦6,000` is 6,000, `3k` and `3 thousand` are 3,000, `1.8` is 1,800, `1.500` is 1,500, `5-8` is 5,800, and number words ("two thousand five hundred") work. "All the tins 800" prices every item sold by the tin.
+Prices are read as traders say them: `650` is 650, `₦6,000` is 6,000, `3k` and `3 thousand` are 3,000, `1.8` is 1,800, `1.500` is 1,500, `5-8` on its own is 5,800 (but "5-8 thousand" is a range), and number words ("two thousand five hundred") work. "All the tins 800" prices every item sold by the tin.
 
 A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 

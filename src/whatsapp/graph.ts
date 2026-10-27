@@ -38,10 +38,18 @@ export class MediaError extends Error {
   }
 }
 
+/** Graph API calls give up after this long; media downloads (up to 16 MB) after MEDIA_TIMEOUT_MS. */
+export const GRAPH_TIMEOUT_MS = 30_000;
+export const MEDIA_TIMEOUT_MS = 60_000;
+/** Media URLs come from Meta's own CDN hosts. The access token is only ever sent to these. */
+const MEDIA_HOSTS = /^(lookaside\.fbsbx\.com|[a-z0-9.-]+\.(fbsbx\.com|fbcdn\.net|facebook\.com|whatsapp\.net))$/;
+
 export type GraphOptions = {
   token: string;
   phoneNumberId: string;
   fetch?: typeof fetch;
+  /** Overrides GRAPH_TIMEOUT_MS and MEDIA_TIMEOUT_MS, for tests. */
+  timeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 };
@@ -50,6 +58,7 @@ export class GraphClient {
   readonly #token: string;
   readonly #phoneNumberId: string;
   readonly #fetch: typeof fetch;
+  readonly #timeoutMs: number | undefined;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #now: () => number;
   readonly #nextSendAt = new Map<string, number>();
@@ -59,6 +68,7 @@ export class GraphClient {
     this.#token = o.token;
     this.#phoneNumberId = o.phoneNumberId;
     this.#fetch = o.fetch ?? globalThis.fetch;
+    this.#timeoutMs = o.timeoutMs;
     this.#sleep = o.sleep ?? ((ms) => Bun.sleep(ms));
     this.#now = o.now ?? Date.now;
   }
@@ -110,12 +120,19 @@ export class GraphClient {
       if (!accept.mimeTypes.some((m) => m === base || m === mimeType.replace(/\s+/g, ""))) throw new MediaError("wrong-type", `Media type ${mimeType || "unknown"} isn't accepted`);
       const declared = Number(info.file_size);
       if (Number.isFinite(declared) && declared > accept.maxBytes) throw new MediaError("too-big", `Media is ${declared} bytes; the limit is ${accept.maxBytes}`);
-      if (typeof info.url !== "string" || !info.url.startsWith("https://")) throw new MediaError("unavailable", "Meta gave no download URL");
+      if (typeof info.url !== "string" || !isMetaMediaUrl(info.url)) throw new MediaError("unavailable", "Meta gave no usable download URL");
 
-      const res = await this.#fetch(info.url, { headers: { authorization: `Bearer ${this.#token}` } });
-      if (res.status === 404 && attempt === 0) continue; // URL expired: ask for a fresh one
-      if (!res.ok) throw new MediaError("unavailable", `Media download failed with HTTP ${res.status}`);
-      const bytes = new Uint8Array(await res.arrayBuffer());
+      let res: Response;
+      let bytes: Uint8Array;
+      try {
+        res = await this.#fetch(info.url, { headers: { authorization: `Bearer ${this.#token}` }, signal: AbortSignal.timeout(this.#timeoutMs ?? MEDIA_TIMEOUT_MS) });
+        if (res.status === 404 && attempt === 0) continue; // URL expired: ask for a fresh one
+        if (!res.ok) throw new MediaError("unavailable", `Media download failed with HTTP ${res.status}`);
+        bytes = new Uint8Array(await res.arrayBuffer());
+      } catch (e) {
+        if (e instanceof MediaError) throw e;
+        throw new MediaError("unavailable", `Media download failed: ${e instanceof Error ? e.name : String(e)}`);
+      }
       if (bytes.byteLength > accept.maxBytes) throw new MediaError("too-big", `Media is ${bytes.byteLength} bytes; the limit is ${accept.maxBytes}`);
       if (typeof info.sha256 === "string" && info.sha256 !== "" && !hashMatches(bytes, info.sha256)) throw new MediaError("corrupt", "Media hash doesn't match");
       return { bytes, mimeType: base };
@@ -155,6 +172,7 @@ export class GraphClient {
           method,
           headers: { authorization: `Bearer ${this.#token}`, ...(body ? { "content-type": "application/json" } : {}) },
           ...(body ? { body: JSON.stringify(body) } : {}),
+          signal: AbortSignal.timeout(this.#timeoutMs ?? GRAPH_TIMEOUT_MS),
         });
         const text = await res.text();
         let json: Record<string, unknown> = {};
@@ -176,6 +194,16 @@ export class GraphClient {
       }
       await this.#sleep(RETRY_DELAYS_MS[attempt]!);
     }
+  }
+}
+
+/** True for an https URL on one of Meta's media hosts, so the token never goes anywhere else. */
+export function isMetaMediaUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && u.port === "" && u.username === "" && MEDIA_HOSTS.test(u.hostname);
+  } catch {
+    return false;
   }
 }
 

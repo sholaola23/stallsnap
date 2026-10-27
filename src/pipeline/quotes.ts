@@ -36,7 +36,8 @@ const GENERIC = new Set([
 ]);
 
 export type Price = { value: number; at: number };
-export type Spoken = { tokens: string[]; prices: Price[]; unreadable: number[] };
+/** `masked`: positions that are part of an item's name ("400g", or the "5" in "5 alive"), never numbers. */
+export type Spoken = { tokens: string[]; prices: Price[]; unreadable: number[]; masked: number[] };
 
 const singular = (w: string) => (w.length > 3 && w.endsWith("es") && !w.endsWith("ses") ? w.slice(0, -2) : w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w);
 
@@ -104,16 +105,19 @@ function wordValue(tokens: string[], i: number): { value: number; consumed: numb
 
 /** Every price expression in a message, with the token it starts at. */
 /**
- * Reads every price in `text`. Words in `nameWords` (item-name words with a digit in them, such as
- * "400g" or "7up") are part of a name, not numbers.
+ * Reads every price in `text`. Words that are provably part of an item's name are not numbers:
+ * - a word with digits and letters from any item's name ("400g", "50kg", "7up", "3-in-1"), which can never be a price;
+ * - a bare number from a name ("5" in "5 Alive", "30" in "Eggs 30") only where that item's whole name is said, in order.
+ * Anything else that looks like a number is one, so a doubtful reading is asked about, never guessed.
  */
-export function readSpoken(text: string, nameWords: ReadonlySet<string> = new Set()): Spoken {
+export function readSpoken(text: string, items: readonly { name: string }[] = []): Spoken {
   const tokens = tokenize(text);
   let prices: Price[] = [];
   const unreadable: number[] = [];
   const numbers: { at: number; end: number }[] = []; // every number, small ones too, for finding ranges
+  const masked = maskNames(tokens, items);
   for (let i = 0; i < tokens.length; ) {
-    if (nameWords.has(tokens[i]!)) {
+    if (masked.has(i)) {
       i++;
       continue;
     }
@@ -151,7 +155,21 @@ export function readSpoken(text: string, nameWords: ReadonlySet<string> = new Se
   }
   prices = prices.filter((p) => !unreadable.includes(p.at));
   unreadable.sort((x, y) => x - y);
-  return { tokens, prices, unreadable };
+  return { tokens, prices, unreadable, masked: [...masked].sort((x, y) => x - y) };
+}
+
+function maskNames(tokens: string[], items: readonly { name: string }[]): Set<number> {
+  const masked = new Set<number>();
+  const mixed = new Set(items.flatMap((it) => tokenize(it.name).filter((w) => /\d/.test(w) && /\p{L}/u.test(w))));
+  tokens.forEach((w, i) => mixed.has(w) && masked.add(i));
+  for (const it of items) {
+    const name = tokenize(it.name);
+    if (!name.some((w) => /^\d+$/.test(w))) continue;
+    for (let i = 0; i + name.length <= tokens.length; i++) {
+      if (name.every((w, j) => singular(tokens[i + j]!) === singular(w))) name.forEach((w, j) => /^\d+$/.test(w) && masked.add(i + j));
+    }
+  }
+  return masked;
 }
 
 export type QuoteItem = { item: number; name: string; unit?: string };
@@ -168,11 +186,6 @@ export function itemKeys(items: readonly QuoteItem[]): Map<number, string[]> {
     keys.set(it.item, key);
   }
   return keys;
-}
-
-/** Item-name words with a digit in them, which are read as names, not numbers. */
-export function nameNumberWords(items: readonly QuoteItem[]): Set<string> {
-  return new Set(items.flatMap((it) => tokenize(it.name).filter((w) => /\d/.test(w))));
 }
 
 /** Token positions where the item is mentioned: all its key words within a few words of each other. */
@@ -214,8 +227,7 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
     return no("another item has the same name, so the trader must say which one");
   }
 
-  const nameWords = nameNumberWords(ctx.items);
-  const q = readSpoken(quote, nameWords);
+  const q = readSpoken(quote, ctx.items);
   if (q.tokens.length === 0) return no("quote must be the trader's exact words from the transcript");
   if (q.unreadable.length > 0) return no("the number in the quote can't be read safely (a letter inside a number)");
   const values = [...new Set(q.prices.map((p) => p.value))];
@@ -223,7 +235,7 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   if (values.length > 1) return no("the quote has more than one price; a range or a choice is not a price, so ask the trader");
   if (values[0] !== naira) return no(`price_naira ${naira} doesn't match the price in the quote (${values[0]})`);
 
-  const messages = ctx.said.map((t) => readSpoken(t, nameWords));
+  const messages = ctx.said.map((t) => readSpoken(t, ctx.items));
   let m = -1;
   let at = -1;
   for (let i = messages.length - 1; i >= 0 && m < 0; i--) {
@@ -253,12 +265,12 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   const group = stretch.some((w) => GROUP_WORDS.has(w));
   if (msg.unreadable.some((p) => p >= from && p < to)) return no("a number near the quote can't be read safely, so ask the trader");
 
-  // "2 7up 600": a small number straight before the item is a quantity, so the price might be for all of them
-  // or for each one. That's for the trader to say. (A number after "na" is another item's price, not a quantity.)
+  // "2 7up 600", "2 rice 6000": a number straight before the item (not part of its name) may be a quantity,
+  // so the price might be for all of them or each one. That's for the trader to say.
+  // A number after "na" is the previous item's price. Digits only: number words run on across sentences
+  // once punctuation is gone ("... one one. Milo strip").
   const before = msg.tokens[from - 1];
-  // Digits only: number words run on across sentences once punctuation is gone ("... one one. Milo strip").
-  const beforeValue = before !== undefined && /^\d+$/.test(before) ? Number(before) : undefined;
-  if (beforeValue !== undefined && beforeValue < 100 && msg.tokens[from - 2] !== "na") {
+  if (before !== undefined && /^\d+$/.test(before) && !msg.masked.includes(from - 1) && msg.tokens[from - 2] !== "na") {
     return no("a quantity before the item makes the price unclear (for all of them, or each?), so ask the trader");
   }
 

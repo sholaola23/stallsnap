@@ -539,6 +539,14 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   return no("the trader hasn't said a price for this item by name; ask the trader");
 }
 
+/** Words that are never an item's name: scales, money, units and sizes, corrections and terms of address. */
+const NOT_NAMES = new Set([
+  ...Object.keys(SCALES), ...THOUSAND_WORDS, "naira", "kobo", "ngn", "price", "prices",
+  "kilo", "kilos", "kilogram", "kilograms", "gram", "grams", "litres", "liter", "liters", "ml", "cl", "dozens", "pieces",
+  "actually", "abi", "rather", "instead", "oops", "correct",
+  "oga", "madam", "madame", "aunty", "auntie", "sir", "customer", "customers", "brother", "sister", "bros", "mummy", "daddy", "friend",
+]);
+
 /**
  * An item the trader priced that isn't on the photo's list ("yam na 2000" with no yam in the photo).
  * The name sent back is the trader's own words, never the model's: it must sit inside the quote, which
@@ -555,14 +563,22 @@ export function checkUnlisted(ctx: QuoteContext, name: string, quote: string): {
   if (!q.some(isNumberToken)) return { ok: false, reason: "quote must include the price the trader said" };
   const listed = segments(n.join(" "), ctx.items).segments[0];
   if (listed) return { ok: false, reason: `that is item ${listed.item} on the list; use set_price or flag_missing_price` };
-  // It will mark where a listed item's words end, so it must be a real name with its own plain price
-  // ("yam na 2000"), never a word like "abeg" or "no" that could cut a listed item's price short.
-  if (n.some((w) => w.length < 3 || FILLERS.has(w) || CONNECTORS.has(w) || SELLING.has(w) || JOINERS.has(w) || CORRECTIONS.has(w) || RANGE_WORDS.has(w) || GENERIC.has(w))) {
-    return { ok: false, reason: "name must be the item's name, not a filler or price word" };
+  // A word from a listed item's name, or the start of one ("milk", "peak", "semo" for Golden Penny
+  // Semovita), means the trader is probably naming that item. It is asked, never sent for a photo.
+  for (const it of ctx.items) {
+    const words = tokenize(it.name).map(nameWord).filter((w) => w.length >= 3 && !/\d/.test(w) && !GENERIC.has(w));
+    const hit = n.map(nameWord).find((w) => words.some((x) => x === w || (w.length >= 3 && x.startsWith(w)) || (x.length >= 3 && w.startsWith(x))));
+    if (hit) return { ok: false, reason: `that sounds like item ${it.item}; use set_price or flag_missing_price` };
   }
-  // In the quote, straight after the name, filler or "na" and then one plain price.
+  // It will mark where a listed item's words end, so it must be a real name with its own plain price
+  // ("yam na 2000"), never a word like "abeg", "thousand", "naira" or "oga" that could cut a listed
+  // item's price short.
+  if (n.some((w) => w.length < 3 || NOT_NAMES.has(w) || FILLERS.has(w) || CONNECTORS.has(w) || SELLING.has(w) || JOINERS.has(w) || CORRECTIONS.has(w) || RANGE_WORDS.has(w) || GENERIC.has(singular(w)))) {
+    return { ok: false, reason: "name must be the item's name, not a filler, price or unit word" };
+  }
+  // In the quote, straight after the name, at most "na", "is", "for" or "at", and then one plain price.
   let j = findAll(q, n)[0]! + n.length;
-  while (j < q.length && (FILLERS.has(q[j]!) || CONNECTORS.has(q[j]!) || SELLING.has(q[j]!))) j++;
+  while (j < q.length && CONNECTORS.has(q[j]!)) j++;
   if (!parsePrice(q, j)) return { ok: false, reason: "the trader didn't say one plain price straight after that name" };
   return { ok: true, name: n.join(" ") };
 }

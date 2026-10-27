@@ -8,6 +8,7 @@ import { MetaClient } from "../../src/meta/client.ts";
 import { MAX_UNLISTED, priceItems } from "../../src/pipeline/pricing.ts";
 import { scriptedSpark, setPrice } from "../../src/pipeline/test-spark.ts";
 import { SpendGuard } from "../../src/spend-guard.ts";
+import { copy } from "../../src/whatsapp/copy.ts";
 
 let dir: string;
 let guard: SpendGuard;
@@ -88,5 +89,62 @@ describe("a noted name can't be used to cut a listed item's price short", () => 
   test("without a note, \"rice na 1500, yam na 2000\" asks Rice rather than guess where its price ends", async () => {
     const r = await run("rice na 1500, yam na 2000", []);
     expect(r.lines[0]!.price).toBeNull();
+  });
+});
+
+describe("#14 QA B16: a word from a listed item's name is that item, not one missing from the photo", () => {
+  const cases: [string[], string, string][] = [
+    [["Peak Milk", "Rice"], "milk na 1500", "milk"],
+    [["Peak Milk 400g"], "peak na 1500", "peak"],
+    [["Golden Penny Semovita"], "semovita na 1500", "semovita"],
+    [["Golden Penny Semovita"], "semo na 1500", "semo"],
+    [["Indomie Chicken"], "indomie na 250", "indomie"],
+  ];
+  for (const [names, said, name] of cases) {
+    test(`"${name}" with ${names.join(", ")} is refused, and no "You mentioned" line is sent`, async () => {
+      const list = names.map((n, i) => ({ item: i + 1, name: n }));
+      const spark = scriptedSpark([[note(name, said)], "done"]);
+      const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b16", list, [said]);
+      expect(r.unlisted).toEqual([]);
+      expect(r.events[0]!.reason).toContain("sounds like item");
+      expect(copy.questions(r.lines, r.unlisted)).not.toContain("You mentioned");
+    });
+  }
+});
+
+describe("#14 QA B17: scale, money, unit, correction and address words are never item names", () => {
+  const cases: [string[], string, string, string][] = [
+    [["Rice"], "rice na 75 thousand 5 hundred", "thousand", "thousand 5 hundred"],
+    [["Rice"], "rice na 15 hundred 50 naira", "hundred", "hundred 50 naira"],
+    [["Rice", "Garri"], "rice na 1500 naira 200 garri na 900", "naira", "naira 200"],
+    [["Generator"], "generator na 2 million 500 thousand", "million", "million 500 thousand"],
+    [["Rice"], "rice na 1500 kilo 200", "kilo", "kilo 200"],
+    [["Rice"], "rice na 1500 actually 2000", "actually", "actually 2000"],
+    [["Rice"], "oga na 500, rice na 1500", "oga", "oga na 500"],
+    [["Rice"], "rice na 1500, madam na 200", "madam", "madam na 200"],
+    [["Rice"], "rice na 1500 kobo 50", "kobo", "kobo 50"],
+    [["Rice"], "rice na 1500 abi 2000", "abi", "abi 2000"],
+  ];
+  for (const [names, said, name, quote] of cases) {
+    test(`"${name}" in ${JSON.stringify(said)} is refused`, async () => {
+      const list = names.map((n, i) => ({ item: i + 1, name: n }));
+      const spark = scriptedSpark([[note(name, quote)], "done"]);
+      const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b17", list, [said]);
+      expect(r.unlisted).toEqual([]);
+      expect(r.events[0]!.accepted).toBe(false);
+    });
+  }
+  test("only \"na\", \"is\", \"for\" or \"at\" may come between the name and its price: \"yam dey 2000\" is refused", async () => {
+    const r = await run("rice na 1500, yam dey 2000", [note("yam", "yam dey 2000")]);
+    expect(r.unlisted).toEqual([]);
+  });
+});
+
+describe("every accepted note marks a boundary, even past the cap", () => {
+  test("a listed item after a 4th unlisted item still prices", async () => {
+    const said = "yam na 2000, egusi na 900, ogbono na 700, crayfish na 500, rice na 1500";
+    const r = await run(said, [note("yam", "yam na 2000"), note("egusi", "egusi na 900"), note("ogbono", "ogbono na 700"), note("crayfish", "crayfish na 500")]);
+    expect(r.unlisted).toEqual(["yam", "egusi", "ogbono"]);
+    expect(r.lines[0]!.price?.naira).toBe(1500);
   });
 });

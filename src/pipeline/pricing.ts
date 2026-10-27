@@ -182,7 +182,7 @@ export async function priceItems(
   ];
   const finish = (turns: number, stopped: PricingResult["stopped"]): PricingResult => {
     for (const line of lines.values()) if (!line.price && !line.question) line.question = questionFor(line.name);
-    return { lines: [...lines.values()], unlisted, events, turns, stopped };
+    return { lines: [...lines.values()], unlisted: unlisted.slice(0, MAX_UNLISTED), events, turns, stopped };
   };
 
   if (items.length === 0) return finish(0, "all-done");
@@ -220,7 +220,8 @@ export async function priceItems(
       const checked = args === undefined ? { result: { ok: false as const, reason: "arguments must be JSON" } } : checkCall(name, args, ctx);
       const { result, apply } = checked;
       const extra = "unlisted" in checked ? checked.unlisted : undefined;
-      if (result.ok && extra !== undefined && !unlisted.includes(extra) && unlisted.length < MAX_UNLISTED) {
+      // Every accepted name marks where a listed item's words end; only the first few are mentioned back.
+      if (result.ok && extra !== undefined && !unlisted.includes(extra)) {
         unlisted.push(extra);
         ctx.unlisted = unlisted.map((name, i) => ({ item: -1 - i, name }));
       }

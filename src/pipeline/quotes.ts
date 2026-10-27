@@ -58,7 +58,11 @@ export function tokenize(text: string): string[] {
 function digitValue(token: string, next: string | undefined): { value: number; consumed: number } | "unreadable" | undefined {
   const m = /^n?(\d+)(?:\.(\d+))?(k)?$/.exec(token);
   if (!m) {
-    if (/^\d-\d$/.test(token)) return { value: Number(token[0]) * 1000 + Number(token[2]) * 100, consumed: 1 };
+    if (/^\d-\d$/.test(token)) {
+      // "1-8" is one-eight, 1,800. "5-8 thousand" or "5-8k" is a range, never one price.
+      if (next !== undefined && THOUSAND_WORDS.has(next)) return "unreadable";
+      return { value: Number(token[0]) * 1000 + Number(token[2]) * 100, consumed: 1 };
+    }
     return /\d/.test(token) ? "unreadable" : undefined;
   }
   const [, whole, decimals, k] = m;
@@ -101,8 +105,9 @@ function wordValue(tokens: string[], i: number): { value: number; consumed: numb
 /** Every price expression in a message, with the token it starts at. */
 export function readSpoken(text: string): Spoken {
   const tokens = tokenize(text);
-  const prices: Price[] = [];
+  let prices: Price[] = [];
   const unreadable: number[] = [];
+  const numbers: { at: number; end: number }[] = []; // every number, small ones too, for finding ranges
   for (let i = 0; i < tokens.length; ) {
     const d = digitValue(tokens[i]!, tokens[i + 1]);
     if (d === "unreadable") {
@@ -112,18 +117,32 @@ export function readSpoken(text: string): Spoken {
     }
     if (d) {
       prices.push({ value: d.value, at: i });
+      numbers.push({ at: i, end: i + d.consumed });
       i += d.consumed;
       continue;
     }
     const w = wordValue(tokens, i);
+    if (w) numbers.push({ at: i, end: i + w.consumed });
     // A lone "one" ("one cup") isn't a price; number words count from ten, or with a scale.
     if (w && (w.value >= 10 || w.consumed > 1)) {
       prices.push({ value: w.value, at: i });
       i += w.consumed;
       continue;
     }
-    i++;
+    i += w ? w.consumed : 1;
   }
+  // A range is never one price: "5 to 8k", "two to three thousand", "1,000-1,200" (a dash between
+  // numbers reads as two numbers side by side). Both ends become unreadable, so the item is asked.
+  for (let k = 0; k + 1 < numbers.length; k++) {
+    const a = numbers[k]!;
+    const b = numbers[k + 1]!;
+    const gap = tokens.slice(a.end, b.at);
+    if (gap.length === 0 || (gap.length === 1 && RANGE_WORDS.has(gap[0]!))) {
+      for (const n of [a, b]) if (!unreadable.includes(n.at)) unreadable.push(n.at);
+    }
+  }
+  prices = prices.filter((p) => !unreadable.includes(p.at));
+  unreadable.sort((x, y) => x - y);
   return { tokens, prices, unreadable };
 }
 

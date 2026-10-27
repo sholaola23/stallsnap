@@ -623,3 +623,40 @@ describe("strict price chains", () => {
     });
   }
 });
+
+describe("a price under ₦50 is asked (safety net)", () => {
+  async function price(names: string[], said: string, item: number, naira: number, quote: string) {
+    const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "floor", names.map((name, i) => ({ item: i + 1, name })), [said]);
+    return r.lines[item - 1]!.price?.naira ?? null;
+  }
+  const asked: [string[], string, number, number, string][] = [
+    [["Rice", "Garri"], "rice na 15, garri na 900", 1, 15, "rice na 15"],
+    [["Rice", "Eggs"], "rice 30 eggs 2500", 1, 30, "rice 30"],
+    [["Rice"], "rice na 49", 1, 49, "rice na 49"],
+    [["Sweet"], "sweet na 10 naira", 1, 10, "sweet na 10 naira"],
+  ];
+  for (const [names, said, item, naira, quote] of asked) {
+    test(`${JSON.stringify(said)}: ${names[item - 1]} at ₦${naira} is asked`, async () => {
+      expect(await price(names, said, item, naira, quote)).toBeNull();
+    });
+  }
+  test("₦50 itself is a price: \"pure water na 50\"", async () => {
+    expect(await price(["Pure water"], "pure water na 50", 1, 50, "pure water na 50")).toBe(50);
+  });
+});
+
+describe("Pidgin selling words: \"we dey sell am\"", () => {
+  const cases: [string, number, number, string][] = [
+    ["rice, we dey sell am 1500", 1, 1500, "rice we dey sell am 1500"],
+    ["rice we dey sell am for 1500", 1, 1500, "rice we dey sell am for 1500"],
+    ["rice na 1500, garri we dey sell am 900", 2, 900, "garri we dey sell am 900"],
+  ];
+  for (const [said, item, naira, quote] of cases) {
+    test(`${JSON.stringify(said)} prices ${items[item - 1]!.name} at ₦${naira}`, async () => {
+      const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+      const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "am", items, [said]);
+      expect(r.lines[item - 1]!.price?.naira ?? null).toBe(naira);
+    });
+  }
+});

@@ -129,6 +129,8 @@ One price is one number: digits or number words, with an optional N/₦ or "nair
 
 `test/golden/everyday.test.ts` holds 51 ordinary voice notes and lists with the exact price for every item, and CI runs it, so a parser change can never quietly break an everyday note. A number word matches a digit in a name ("five alive" is 5 Alive), and a list number at the start of a line ("1. Rice: ₦1,500") is not a quantity. A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
 
+As a safety net, a price under ₦50 is always asked back: it is far more likely a quantity or a misheard number ("rice 30", "15" for "15 thousand").
+
 A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 
 The loop stops when every item is decided, when Spark answers in plain text, after 4 turns, or when the same call is made 3 times. History is replayed statelessly (`store: false`, encrypted reasoning).

@@ -285,6 +285,30 @@ describe("names with a digit or size", () => {
       expect(await priced([...names], said, 1500, said)).toBe(1500);
     });
   }
+  for (const [names, said, naira] of [
+    [["Coke 50cl", "Fanta"], "coke 50cl na 300", 300],
+    [["Coke 50cl", "Fanta"], "coke na 300", 300],
+    [["Milo 3-in-1", "Bournvita"], "milo 3-in-1 na 1500", 1500],
+    [["Rice 50kg", "Beans"], "50kg rice na 45000", 45000],
+    [["Rice 50kg", "Beans"], "rice 50kg 45k", 45000],
+    [["7Up", "Coke"], "7up na 300", 300],
+    [["Peak Milk 400g", "Rice"], "peak milk 400g na 1500", 1500],
+  ] as const) {
+    test(`${JSON.stringify(said)} prices ${names[0]} at ${naira}, never at the size`, async () => {
+      expect(await priced([...names], said, naira, said)).toBe(naira);
+    });
+  }
+  test("the size is never the price: 400 for Peak Milk 400g is refused", async () => {
+    expect(await priced(["Peak Milk 400g", "Rice"], "peak milk 400g na 1500", 400, "peak milk 400g")).toBeNull();
+  });
+  test("\"2 7up 600\" is ambiguous (two for 600, or 600 each?) and is asked back", async () => {
+    expect(await priced(["7Up", "Coke"], "2 7up 600", 600, "2 7up 600")).toBeNull();
+    expect(await priced(["7Up", "Coke"], "2 7up 600", 600, "7up 600")).toBeNull();
+    expect(await priced(["7Up", "Coke"], "2 7up 600", 300, "2 7up 600")).toBeNull();
+  });
+  test("a range is still never one price with a sized name", async () => {
+    expect(await priced(["Rice 50kg", "Beans"], "rice 50kg 40 to 45k", 45000, "45k")).toBeNull();
+  });
   test("two sizes of one product still need the size said", async () => {
     expect(await priced(["Peak Milk 400g", "Peak Milk 900g"], "peak milk na 1500", 1500, "peak milk na 1500")).toBeNull();
     expect(await priced(["Peak Milk 400g", "Peak Milk 900g"], "peak milk 400g na 1500", 1500, "peak milk 400g na 1500")).toBe(1500);

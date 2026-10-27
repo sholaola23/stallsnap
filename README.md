@@ -176,11 +176,12 @@ bun src/pipeline/try-cutouts.ts stall.jpg
 | The quote is the trader's own words, as whole words in one message | a made-up quote; "3000" cut out of "30000" |
 | Code reads exactly one price from the quote, equal to Spark's | "rice dey" (no price), "N/A", "free", 650 read as 650,000, "1,5OO" (letter O), "1000-1200", "2k/2.5k", "500 each, 2000 for five" |
 | The quote sits in this item's part of the message, which names the item before the price | Rice's price used for Beans; "all the tins 800" for a bag of rice |
+| A quantity doesn't come straight before the item | "2 7up 600" (600 for both, or each?) |
 | It is not one end of a range | "5-8 thousand", "5 to 8k", "two to three thousand", "1,000-1,200", "2000 or 2500" |
 | It is the trader's last word on the item | "3000... no, 3500" quoted as 3000; a later voice note with a new price |
 | No other item has the same name | two items both called "Tomato" |
 
-Prices are read as traders say them: `650` is 650, `₦6,000` is 6,000, `3k` and `3 thousand` are 3,000, `1.8` is 1,800, `1.500` is 1,500, `5-8` on its own is 5,800 (but "5-8 thousand" is a range), and number words ("two thousand five hundred") work. "All the tins 800" prices every item sold by the tin.
+Prices are read as traders say them: `650` is 650, `₦6,000` is 6,000, `3k` and `3 thousand` are 3,000, `1.8` is 1,800, `1.500` is 1,500, `5-8` on its own is 5,800 (but "5-8 thousand" is a range), and number words ("two thousand five hundred") work. A size or number inside an item's name ("Peak Milk 400g", "Rice 50kg", "Coke 50cl", "7Up", "Milo 3-in-1") is part of the name, never a price, and isn't needed to say which item unless two items differ only by it. "All the tins 800" prices every item sold by the tin.
 
 A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 

@@ -43,6 +43,20 @@ export function parseAllowedNumbers(raw: string): Set<string> {
   return out;
 }
 
+/**
+ * The number behind the catalogue's "Message on WhatsApp" button, or undefined when
+ * DEMO_WHATSAPP_NUMBER is blank (no button). The demo stall uses the WhatsApp test
+ * number only: a number that is also a trader's (in ALLOWED_NUMBERS) stops start-up.
+ */
+export function loadDemoContact(allowed: ReadonlySet<string>, env: Record<string, string | undefined> = process.env): string | undefined {
+  const raw = readEnv("DEMO_WHATSAPP_NUMBER", env);
+  if (raw === undefined) return undefined;
+  const numbers = [...parseAllowedNumbers(raw)];
+  if (numbers.length !== 1) throw new Error("DEMO_WHATSAPP_NUMBER must be one phone number");
+  if (allowed.has(numbers[0]!)) throw new Error("DEMO_WHATSAPP_NUMBER is a trader's number (in ALLOWED_NUMBERS); use the WhatsApp test number");
+  return numbers[0];
+}
+
 /** Reads the webhook settings, or throws naming every missing one. */
 export function loadWebhookConfig(env: Record<string, string | undefined> = process.env): WebhookConfig {
   const missing = missingEnv(["APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "ALLOWED_NUMBERS"], env);

@@ -281,12 +281,13 @@ export class Conversation {
       const version = s.version + 1;
       const result = await log.step(s.jobId, `pricing:v${version}`, () => this.#o.models.price(s.jobId, s.items.map(({ item, name }) => ({ item, name })), said));
       s.lines = result.lines;
+      s.unlisted = result.unlisted ?? [];
       s.version = version;
       s.listSent = 0;
       if (s.askRounds === 0 && s.changes === 0 && s.lines.some((l) => !l.price)) {
         s.phase = "asking";
         store.save(s);
-        return void (await this.#say(s.trader, copy.questions(s.lines)));
+        return void (await this.#say(s.trader, copy.questions(s.lines, s.unlisted)));
       }
       s.phase = "confirming";
       store.save(s);
@@ -326,7 +327,7 @@ export class Conversation {
    * text and its button sends only the button.
    */
   async #sendList(s: Session): Promise<void> {
-    const body = copy.list(s.lines);
+    const body = copy.list(s.lines, s.unlisted);
     const button = { id: confirmId(s), title: copy.publishButton };
     const parts: (() => Promise<unknown>)[] =
       body.length <= 1024
@@ -367,7 +368,7 @@ export class Conversation {
 
   async #resend(s: Session): Promise<void> {
     if (s.phase === "confirming") await this.#sendList(s);
-    else if (s.phase === "asking") await this.#say(s.trader, copy.questions(s.lines));
+    else if (s.phase === "asking") await this.#say(s.trader, copy.questions(s.lines, s.unlisted));
     else if (s.phase === "published" && s.url) await this.#o.messenger.sendLink(s.trader, copy.published(s.url), copy.openButton, s.url);
   }
 

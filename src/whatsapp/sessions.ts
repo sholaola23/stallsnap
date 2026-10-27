@@ -31,6 +31,8 @@ export type Session = {
   listSent?: number;
   /** Voice notes already transcribed, so their paid step is known to be done. */
   heard?: string[];
+  /** Items the trader priced that aren't in the photo, in their own words, from the latest pricing. */
+  unlisted?: string[];
 };
 
 export function newSession(trader: string, jobId: string): Session {

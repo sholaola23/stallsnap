@@ -21,7 +21,11 @@ const escape = (s: string) =>
 export const priceText = (i: Pick<CatalogueItem, "naira" | "unit">) =>
   i.naira === null ? "Ask for price" : `₦${i.naira.toLocaleString("en-GB")}${i.unit ? ` per ${i.unit}` : ""}`;
 
-export function renderCatalogue(c: Catalogue, base: string): string {
+/**
+ * `contact` is the demo stall's WhatsApp number, digits only (never a trader's own number).
+ * Without it there is no "Message on WhatsApp" button.
+ */
+export function renderCatalogue(c: Catalogue, base: string, contact?: string): string {
   const updated = new Date(c.updatedAt);
   const date = Number.isNaN(updated.getTime()) ? "" : updated.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
   const cards = c.items
@@ -40,6 +44,7 @@ export function renderCatalogue(c: Catalogue, base: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
   <title>${escape(c.title)}</title>
   <link rel="icon" href="data:,">
   <meta name="description" content="Prices at ${escape(c.title)}, ${c.items.length} ${c.items.length === 1 ? "item" : "items"}.">
@@ -58,6 +63,8 @@ export function renderCatalogue(c: Catalogue, base: string): string {
     h2 { font-size: 1rem; margin: 8px 0 2px; overflow-wrap: anywhere; }
     .price { margin: 0; font-weight: 700; color: var(--accent); font-size: 1.05rem; }
     .price.ask { color: var(--ask); font-weight: 600; }
+    .wa { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 18px; border-radius: 999px; background: var(--accent); color: var(--card); font-weight: 700; text-decoration: none; margin: 0 0 20px; }
+    .wa:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
     footer { color: var(--muted); padding-top: 24px; padding-bottom: 32px; font-size: 0.9rem; }
     @media (min-width: 640px) { h1 { font-size: 2.25rem; } ul { gap: 16px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
   </style>
@@ -66,7 +73,7 @@ export function renderCatalogue(c: Catalogue, base: string): string {
   <header>
     <h1>${escape(c.title)}</h1>
     <p class="meta">${c.items.length} ${c.items.length === 1 ? "item" : "items"}${date ? `. Prices from ${date}` : ""}.</p>
-  </header>
+${contact && /^\d{8,15}$/.test(contact) ? `    <a class="wa" href="https://wa.me/${contact}">Message on WhatsApp</a>\n` : ""}  </header>
   <main>
     <ul>
 ${cards}

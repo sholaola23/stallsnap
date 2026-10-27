@@ -122,3 +122,32 @@ describe("page", () => {
     expect(newSlug()).not.toBe(a);
   });
 });
+
+describe("hidden from search engines, with an optional WhatsApp button", () => {
+  const cat = { title: CATALOGUE_TITLE, items: [{ name: "Rice", naira: 1500, unit: "bag", image: "item-1.webp", width: 480, height: 480 }], updatedAt: "2026-10-27T10:00:00Z" };
+
+  test("the page has a noindex tag, and the page and pictures send X-Robots-Tag", async () => {
+    expect(renderCatalogue(cat, "/c/x")).toContain('<meta name="robots" content="noindex, nofollow">');
+    const { url, dir } = await publishedThroughWhatsApp();
+    const path = new URL(url).pathname;
+    expect(serveCatalogue(path, dir)!.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    expect(serveCatalogue(`${path}/item-1.webp`, dir)!.headers.get("x-robots-tag")).toBe("noindex");
+  });
+
+  test("with no demo number there is no WhatsApp button", () => {
+    expect(renderCatalogue(cat, "/c/x")).not.toContain("Message on WhatsApp");
+  });
+
+  test("with the demo number, the button links to wa.me with that number", async () => {
+    const html = renderCatalogue(cat, "/c/x", "2348000000000");
+    expect(html).toContain('<a class="wa" href="https://wa.me/2348000000000">Message on WhatsApp</a>');
+    const { url, dir } = await publishedThroughWhatsApp();
+    expect(await serveCatalogue(new URL(url).pathname, dir, "2348000000000")!.text()).toContain("https://wa.me/2348000000000");
+  });
+
+  test("anything but digits is never put in the link", () => {
+    for (const bad of ["+2348000000000", "234 800 000 0000", '2348"><script>', "123"]) {
+      expect(renderCatalogue(cat, "/c/x", bad)).not.toContain("Message on WhatsApp");
+    }
+  });
+});

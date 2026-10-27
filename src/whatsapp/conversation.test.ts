@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpendRefused } from "../spend-guard.ts";
 import { copy } from "./copy.ts";
-import { MediaError, TRADER, harness, msg } from "./test-conversation.ts";
+import { MediaError, TRADER, harness, msg, sayPrices } from "./test-conversation.ts";
 
 let h: ReturnType<typeof harness>;
 afterEach(() => h?.cleanup());
@@ -243,5 +243,30 @@ describe("restarts", () => {
 
     await h.conversation.handle(msg.photo("photo-2"));
     expect(h.last().body).toBe(copy.photoThenVoice);
+  });
+});
+
+describe("a price for an item not in the photo", () => {
+  test("the list says \"You mentioned yam, send a photo of it.\", in the trader's words", async () => {
+    h = harness({ models: { price: async (_j, items, said) => ({ ...sayPrices(items, said), unlisted: ["yam"] }) } });
+    await h.conversation.handle(msg.photo());
+    await h.conversation.handle(msg.voice("rice na 6000, garri na 1500, yam na 2000"));
+    const list = h.last();
+    expect(list.kind).toBe("button");
+    expect(list.body).toContain("You mentioned yam, send a photo of it.");
+    expect(list.body).not.toContain("₦2,000");
+  });
+  test("the questions message says it too", async () => {
+    h = harness({ models: { price: async (_j, items, said) => ({ ...sayPrices(items, said), unlisted: ["yam", "egusi"] }) } });
+    await h.conversation.handle(msg.photo());
+    await h.conversation.handle(msg.voice("rice na 6000, yam na 2000, egusi na 900"));
+    expect(h.last().body).toContain("You mentioned yam, send a photo of it.\nYou mentioned egusi, send a photo of it.");
+    expect(h.last().body).toContain("Garri: How much is Garri?");
+  });
+  test("with nothing unlisted, the list is unchanged", async () => {
+    h = harness();
+    await h.conversation.handle(msg.photo());
+    await h.conversation.handle(msg.voice("rice na 6000, garri na 1500"));
+    expect(h.last().body).not.toContain("You mentioned");
   });
 });

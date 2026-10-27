@@ -29,7 +29,9 @@ for (const [i, [name, colour, naira, unit]] of shapes.entries()) {
   s.lines.push({ item: i + 1, name, price: naira === null ? null : { naira, unit: unit as never, quote: "sample" }, question: naira === null ? "How much?" : null });
 }
 
-const server = Bun.serve({ port: 0, fetch: (req) => serveCatalogue(new URL(req.url).pathname, dir) ?? new Response("", { status: 404 }) });
+// A fictional number (555-01xx is reserved for fiction), so the WhatsApp button shows.
+const SAMPLE_CONTACT = "15550100199";
+const server = Bun.serve({ port: 0, fetch: (req) => serveCatalogue(new URL(req.url).pathname, dir, SAMPLE_CONTACT) ?? new Response("", { status: 404 }) });
 const url = await publishCatalogue(s, dir, `http://localhost:${server.port}`);
 
 const { chromium } = await import("playwright");

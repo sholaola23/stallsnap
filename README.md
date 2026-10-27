@@ -93,6 +93,8 @@ When the trader taps Yes, publish, `src/catalogue/publish.ts` writes their confi
 - Prices show as "₦6,000 per bag". An item without a price says "Ask for price", never a number.
 - Pictures are the trader's own cut-outs, as 480 px WebP with transparency.
 - Plain HTML with no JavaScript, a strict Content-Security-Policy, light and dark themes, and every name escaped.
+- Kept out of search engines: a `noindex` tag and an `X-Robots-Tag` header on the page and its pictures. `robots.txt` still allows crawling, because a crawler that can't fetch a page never sees its noindex.
+- A "Message on WhatsApp" button links to `https://wa.me/<number>` when `DEMO_WHATSAPP_NUMBER` is set. The demo stall uses the WhatsApp test number only: start-up stops if the number is one of `ALLOWED_NUMBERS` (a trader's number). Blank means no button.
 
 To check the page: `bun scripts/check-page.ts` publishes a sample (plain coloured shapes, not real products), takes screenshots at 375 and 1280 px, checks for sideways scroll at 320, 375, 768 and 1280 px, and runs axe. It needs Playwright with Chromium. The latest results are in `docs/qa/catalogue-page/`.
 
@@ -193,6 +195,8 @@ One price is one number: digits or number words, with an optional N/₦ or "nair
 | The quote isn't the trader's words for this item, with its latest price | a made-up quote; Rice's price used for Beans; "3000" after "no, 3500" |
 
 `test/golden/everyday.test.ts` holds 51 ordinary voice notes and lists with the exact price for every item, and CI runs it, so a parser change can never quietly break an everyday note. A number word matches a digit in a name ("five alive" is 5 Alive), and a list number at the start of a line ("1. Rice: ₦1,500") is not a quantity. A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
+
+If the trader prices something that isn't in the photo ("yam na 2000"), Spark calls `note_unlisted_item(name, quote)`. Nothing is priced from it, and the trader's reply says "You mentioned yam, send a photo of it." The name is the trader's own words: it must sit inside the quote, the quote must be in what they said with a price straight after the name, and it can't be a listed item or a word such as "abeg", "no" or "bag". An accepted name also marks where a listed item's words end, so "rice na 1500, yam na 2000" still prices Rice. At most 3 such items are mentioned.
 
 As a safety net, a price under ₦50 is always asked back: it is far more likely a quantity or a misheard number ("rice 30", "15" for "15 thousand").
 

@@ -52,8 +52,12 @@ export async function publishCatalogue(s: Session, dataDir: string, baseUrl: str
   return `${baseUrl.replace(/\/+$/, "")}/c/${slug}`;
 }
 
-/** Serves /robots.txt, /c/<slug> and /c/<slug>/item-N.webp. Other /c/ paths are a 404; anything else is undefined. */
-export function serveCatalogue(pathname: string, dataDir: string): Response | undefined {
+/**
+ * Serves /robots.txt, /c/<slug> and /c/<slug>/item-N.webp. Other /c/ paths are a 404; anything else is undefined.
+ * Catalogues are kept out of search engines with noindex (the page tag and an X-Robots-Tag header).
+ * robots.txt still allows crawling, because a crawler that can't fetch a page never sees its noindex.
+ */
+export function serveCatalogue(pathname: string, dataDir: string, contact?: string): Response | undefined {
   if (pathname === "/robots.txt") return new Response("User-agent: *\nAllow: /\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
   const m = /^\/c\/([^/]+)(?:\/([^/]+))?\/?$/.exec(pathname);
   if (!m) return undefined;
@@ -63,18 +67,18 @@ export function serveCatalogue(pathname: string, dataDir: string): Response | un
   const dir = join(dataDir, "public", slug);
   if (file !== undefined) {
     if (!FILE.test(file) || !existsSync(join(dir, file))) return notFound();
-    return new Response(Bun.file(join(dir, file)), { headers: { "content-type": "image/webp", "cache-control": "public, max-age=86400" } });
+    return new Response(Bun.file(join(dir, file)), { headers: { "content-type": "image/webp", "cache-control": "public, max-age=86400", "x-robots-tag": "noindex" } });
   }
   if (!existsSync(join(dir, "catalogue.json"))) return notFound();
   let html: string;
   try {
-    html = renderCatalogue(JSON.parse(readFileSync(join(dir, "catalogue.json"), "utf8")) as Catalogue, `/c/${slug}`);
+    html = renderCatalogue(JSON.parse(readFileSync(join(dir, "catalogue.json"), "utf8")) as Catalogue, `/c/${slug}`, contact);
   } catch (e) {
     // A damaged file gets a plain message, never a stack trace or source.
     console.error(`Catalogue ${slug} can't be read: ${e instanceof Error ? e.message : String(e)}`);
     return new Response("This catalogue can't be shown right now.", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; connect-src 'self'" },
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-robots-tag": "noindex, nofollow", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; connect-src 'self'" },
   });
 }

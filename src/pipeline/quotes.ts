@@ -248,6 +248,8 @@ export type QuoteContext = {
   said: readonly string[];
   /** Quotes already accepted: "message:at" -> item. */
   used: Map<string, number>;
+  /** Items the trader priced that aren't in the photo. They only mark where a listed item's words end. */
+  unlisted?: QuoteItem[];
 };
 
 const CONNECTORS = new Set(["na", "is", "for", "at", "be"]);
@@ -515,7 +517,7 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   }
   const q = tokenize(quote);
   if (q.length === 0) return no("quote must be the trader's exact words from the transcript");
-  const parsed = ctx.said.map((t) => segments(t, ctx.items));
+  const parsed = ctx.said.map((t) => segments(t, [...ctx.items, ...(ctx.unlisted ?? [])]));
   if (!parsed.some((p) => findAll(p.tokens, q).length > 0)) return no("quote must be the trader's exact words from the transcript");
 
   // The trader's latest words on this item that have a number in them decide.
@@ -535,4 +537,32 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
     return { ok: true, message: m, at };
   }
   return no("the trader hasn't said a price for this item by name; ask the trader");
+}
+
+/**
+ * An item the trader priced that isn't on the photo's list ("yam na 2000" with no yam in the photo).
+ * The name sent back is the trader's own words, never the model's: it must sit inside the quote, which
+ * must be in what the trader said and hold a number. It can't be a listed item's name.
+ */
+export function checkUnlisted(ctx: QuoteContext, name: string, quote: string): { ok: true; name: string } | { ok: false; reason: string } {
+  const n = tokenize(name);
+  const q = tokenize(quote);
+  if (n.length === 0 || n.length > 4 || n.some((w) => /\d/.test(w) || w in NUMBER_WORDS)) {
+    return { ok: false, reason: "name must be the item's name in one to four words, with no numbers" };
+  }
+  if (findAll(q, n).length === 0) return { ok: false, reason: "name must be the trader's own words inside the quote" };
+  if (!ctx.said.some((t) => findAll(tokenize(t), q).length > 0)) return { ok: false, reason: "quote must be the trader's exact words from the transcript" };
+  if (!q.some(isNumberToken)) return { ok: false, reason: "quote must include the price the trader said" };
+  const listed = segments(n.join(" "), ctx.items).segments[0];
+  if (listed) return { ok: false, reason: `that is item ${listed.item} on the list; use set_price or flag_missing_price` };
+  // It will mark where a listed item's words end, so it must be a real name with its own plain price
+  // ("yam na 2000"), never a word like "abeg" or "no" that could cut a listed item's price short.
+  if (n.some((w) => w.length < 3 || FILLERS.has(w) || CONNECTORS.has(w) || SELLING.has(w) || JOINERS.has(w) || CORRECTIONS.has(w) || RANGE_WORDS.has(w) || GENERIC.has(w))) {
+    return { ok: false, reason: "name must be the item's name, not a filler or price word" };
+  }
+  // In the quote, straight after the name, filler or "na" and then one plain price.
+  let j = findAll(q, n)[0]! + n.length;
+  while (j < q.length && (FILLERS.has(q[j]!) || CONNECTORS.has(q[j]!) || SELLING.has(q[j]!))) j++;
+  if (!parsePrice(q, j)) return { ok: false, reason: "the trader didn't say one plain price straight after that name" };
+  return { ok: true, name: n.join(" ") };
 }

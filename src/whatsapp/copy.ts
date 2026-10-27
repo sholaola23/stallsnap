@@ -30,21 +30,28 @@ export const copy = {
   publishButton: "Yes, publish",
   openButton: "Open catalogue",
 
-  questions(lines: readonly Line[]): string {
+  /** One line for each item the trader priced that isn't in the photo, in their own words. */
+  notInPhoto(names: readonly string[]): string[] {
+    return names.map((name) => `You mentioned ${name}, send a photo of it.`);
+  },
+
+  questions(lines: readonly Line[], unlisted: readonly string[] = []): string {
     const asks = lines.filter((l) => !l.price);
     return [
       `I found ${lines.length} ${lines.length === 1 ? "item" : "items"}. I need ${asks.length === 1 ? "a price" : "prices"} for:`,
       ...asks.map((l) => `${l.item}. ${l.name}: ${l.question}`),
+      ...(unlisted.length ? ["", ...copy.notInPhoto(unlisted)] : []),
       "",
       "Send a voice note or a text with the prices.",
     ].join("\n");
   },
 
   /** The one priced list. It goes above the single Yes, publish button. */
-  list(lines: readonly Line[]): string {
+  list(lines: readonly Line[], unlisted: readonly string[] = []): string {
     return [
       "Here is your price list:",
       ...lines.map((l) => `${l.item}. ${l.name}: ${l.price ? `${naira(l.price.naira)} per ${l.price.unit}` : "ask for price"}`),
+      ...(unlisted.length ? ["", ...copy.notInPhoto(unlisted)] : []),
       "",
       `Tap Yes, publish to put it online. To change a price, send a voice note or a text, like "${changeExample(lines)}".`,
     ].join("\n");

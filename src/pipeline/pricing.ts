@@ -3,6 +3,7 @@
 // StallSnap never guesses a price. Spark may only call:
 //   set_price(item, price_naira, unit, quote)  when the trader said the price
 //   flag_missing_price(item, question)         when they didn't, or it's unclear
+//   note_unlisted_item(name, quote)            a price for something not in the photo
 // and every call is checked here before it counts:
 // - the item must be one of the cut-outs;
 // - the price must be whole naira from 10 to 5,000,000;
@@ -13,6 +14,8 @@
 //   meaning 1,800, 3k meaning 3,000).
 // A refused call is answered with the reason, so Spark can correct it. Any
 // item still without a price at the end is asked about. Nothing is guessed.
+// An item priced but not in the photo is never added: the trader is told
+// "You mentioned yam, send a photo of it", using their own words.
 //
 // Loop rules (https://dev.meta.ai/docs/tool-calling, /docs/protocols/responses):
 // tool_choice can only be "auto", so a plain-text answer ends the loop; turns
@@ -21,12 +24,14 @@
 import type { MetaClient } from "../meta/client.ts";
 import { SPARK_MODEL, sparkMaxUsd, sparkUsd } from "../meta/costs.ts";
 import { SparkError } from "../meta/spark.ts";
-import { type QuoteContext, checkQuote } from "./quotes.ts";
+import { type QuoteContext, checkQuote, checkUnlisted } from "./quotes.ts";
 
 export const MAX_TURNS = 4;
 export const MAX_OUTPUT_TOKENS = 16_000;
 export const MIN_PRICE = 10;
 export const MAX_PRICE = 5_000_000;
+/** At most this many items not in the photo are mentioned back to the trader. */
+export const MAX_UNLISTED = 3;
 
 export const SALE_UNITS = [
   "piece", "pack", "packet", "sachet", "tin", "bottle", "can", "bag", "carton", "crate", "cup", "paint bucket",
@@ -44,7 +49,14 @@ export type Line = {
 
 export type ToolEvent = { turn: number; name: string; args: unknown; accepted: boolean; reason?: string };
 
-export type PricingResult = { lines: Line[]; events: ToolEvent[]; turns: number; stopped: "all-done" | "model-finished" | "turn-cap" | "repeat-cap" };
+export type PricingResult = {
+  lines: Line[];
+  /** Items the trader priced that aren't in the photo, in their own words ("yam"). */
+  unlisted?: string[];
+  events: ToolEvent[];
+  turns: number;
+  stopped: "all-done" | "model-finished" | "turn-cap" | "repeat-cap";
+};
 
 const TOOLS = [
   {
@@ -79,6 +91,21 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    name: "note_unlisted_item",
+    description: "The trader said a price for something that is not on the list. StallSnap asks them to send a photo of it.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "quote"],
+      properties: {
+        name: { type: "string", description: "The item's name, copied from the trader's words." },
+        quote: { type: "string", description: "The trader's exact words naming the item and its price, copied from the transcript." },
+      },
+    },
+  },
 ];
 
 const DEVELOPER = [
@@ -92,6 +119,7 @@ const DEVELOPER = [
   "If the trader gives a range or two possible prices, flag the item and ask.",
   "Only price an item the trader names, followed by one plain price. A group price, a quantity (\"2 for 1000\"), a range or anything unclear: flag the item so the trader is asked.",
   "The unit is what one price buys: a sachet, a tin, a crate, a paint bucket, and so on. Prices are whole naira.",
+  "If the trader gives a price for something that is not on the list, call note_unlisted_item with its name and their words. Never put that price on a listed item.",
   "When every item has a price or a question, stop.",
 ].join(" ");
 
@@ -100,8 +128,12 @@ type Checked = { ok: true } | { ok: false; reason: string };
 /** The question the trader gets. Code writes it: the model's wording is never sent. */
 export const questionFor = (name: string) => `How much is ${name}?`;
 
-function checkCall(name: string, args: unknown, ctx: QuoteContext): { result: Checked; apply?: (lines: Map<number, Line>) => void } {
+function checkCall(name: string, args: unknown, ctx: QuoteContext): { result: Checked; apply?: (lines: Map<number, Line>) => void; unlisted?: string } {
   const a = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
+  if (name === "note_unlisted_item") {
+    const v = checkUnlisted(ctx, typeof a.name === "string" ? a.name : "", typeof a.quote === "string" ? a.quote : "");
+    return v.ok ? { result: { ok: true }, unlisted: v.name } : { result: v };
+  }
   const item = a.item;
   const line = typeof item === "number" && Number.isInteger(item) ? ctx.items.find((i) => i.item === item) : undefined;
   if (!line) return { result: { ok: false, reason: `item must be one of ${ctx.items.map((i) => i.item).join(", ")}` } };
@@ -140,6 +172,7 @@ export async function priceItems(
   const decided = new Set<number>();
   const ctx: QuoteContext = { items, said, used: new Map() };
   const repeats = new Map<string, number>();
+  const unlisted: string[] = [];
 
   const listText = items.map((i) => `${i.item}. ${i.name}`).join("\n");
   const saidText = said.map((s, i) => `Message ${i + 1}: ${s}`).join("\n");
@@ -149,7 +182,7 @@ export async function priceItems(
   ];
   const finish = (turns: number, stopped: PricingResult["stopped"]): PricingResult => {
     for (const line of lines.values()) if (!line.price && !line.question) line.question = questionFor(line.name);
-    return { lines: [...lines.values()], events, turns, stopped };
+    return { lines: [...lines.values()], unlisted, events, turns, stopped };
   };
 
   if (items.length === 0) return finish(0, "all-done");
@@ -169,7 +202,9 @@ export async function priceItems(
     if (calls.length === 0) return finish(turn, "model-finished");
 
     let repeated = false;
-    for (const call of calls) {
+    // Notes of items not in the photo go first, so a listed item's price can end where they start.
+    const ordered = [...calls.filter((c) => c.name === "note_unlisted_item"), ...calls.filter((c) => c.name !== "note_unlisted_item")];
+    for (const call of ordered) {
       const name = String(call.name ?? "");
       let args: unknown;
       try {
@@ -182,7 +217,13 @@ export async function priceItems(
       repeats.set(key, seen);
       if (seen >= 3) repeated = true;
 
-      const { result, apply } = args === undefined ? { result: { ok: false as const, reason: "arguments must be JSON" } } : checkCall(name, args, ctx);
+      const checked = args === undefined ? { result: { ok: false as const, reason: "arguments must be JSON" } } : checkCall(name, args, ctx);
+      const { result, apply } = checked;
+      const extra = "unlisted" in checked ? checked.unlisted : undefined;
+      if (result.ok && extra !== undefined && !unlisted.includes(extra) && unlisted.length < MAX_UNLISTED) {
+        unlisted.push(extra);
+        ctx.unlisted = unlisted.map((name, i) => ({ item: -1 - i, name }));
+      }
       if (result.ok && apply) {
         apply(lines);
         decided.add((args as { item: number }).item);

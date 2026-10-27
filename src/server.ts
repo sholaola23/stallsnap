@@ -12,7 +12,7 @@ import { MetaClient } from "./meta/client.ts";
 import { cleanupStep } from "./pipeline/cleanup.ts";
 import { realModels } from "./pipeline/models.ts";
 import { DEFAULT_LEDGER_PATH, MAX_CALLS_PER_JOB, SpendGuard } from "./spend-guard.ts";
-import { loadWebhookConfig } from "./whatsapp/config.ts";
+import { loadDemoContact, loadWebhookConfig } from "./whatsapp/config.ts";
 import { Conversation } from "./whatsapp/conversation.ts";
 import { GraphClient } from "./whatsapp/graph.ts";
 import type { Handler } from "./whatsapp/webhook.ts";
@@ -21,6 +21,7 @@ import { SessionStore } from "./whatsapp/sessions.ts";
 
 const DATA_DIR = ".data";
 const config = loadWebhookConfig();
+const contact = loadDemoContact(config.allowed);
 const log = new JobLog(`${DATA_DIR}/joblog.jsonl`);
 const guard = new SpendGuard({ ledgerPath: DEFAULT_LEDGER_PATH });
 
@@ -62,6 +63,6 @@ const server = Bun.serve({
     console.error(`Request failed: ${e.message}`);
     return new Response("Something went wrong.", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
   },
-  fetch: (req) => ((req.method === "GET" || req.method === "HEAD") && serveCatalogue(new URL(req.url).pathname, DATA_DIR)) || webhook.fetch(req),
+  fetch: (req) => ((req.method === "GET" || req.method === "HEAD") && serveCatalogue(new URL(req.url).pathname, DATA_DIR, contact)) || webhook.fetch(req),
 });
 console.log(`StallSnap listening on port ${server.port}`);

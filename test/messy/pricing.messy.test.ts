@@ -265,3 +265,31 @@ describe("Grok review on PR #6: ranges", () => {
     });
   }
 });
+
+// QA after Grok on PR #8 (B5): item names with a digit or size can be priced.
+describe("names with a digit or size", () => {
+  async function priced(names: string[], said: string, naira: number, quote: string) {
+    const spark = scriptedSpark([[setPrice(1, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b5", names.map((name, i) => ({ item: i + 1, name })), [said]);
+    return r.lines[0]!.price?.naira ?? null;
+  }
+  for (const [names, said] of [
+    [["Peak Milk 400g", "Rice"], "peak milk na 1500"],
+    [["Peak Milk 400g", "Rice"], "peak milk 400g na 1500"],
+    [["Rice 50kg", "Beans"], "rice 50kg na 1500"],
+    [["Rice 50kg", "Beans"], "rice na 1500"],
+    [["7Up", "Coke"], "7up na 1500"],
+    [["Milo 500g tin", "Bournvita"], "milo na 1500"],
+  ] as const) {
+    test(`${JSON.stringify(said)} prices ${names[0]} at 1,500`, async () => {
+      expect(await priced([...names], said, 1500, said)).toBe(1500);
+    });
+  }
+  test("two sizes of one product still need the size said", async () => {
+    expect(await priced(["Peak Milk 400g", "Peak Milk 900g"], "peak milk na 1500", 1500, "peak milk na 1500")).toBeNull();
+    expect(await priced(["Peak Milk 400g", "Peak Milk 900g"], "peak milk 400g na 1500", 1500, "peak milk 400g na 1500")).toBe(1500);
+  });
+  test("a size in a name is never read as the price", async () => {
+    expect(await priced(["Rice 50kg", "Beans"], "rice 50kg", 50, "rice 50kg")).toBeNull();
+  });
+});

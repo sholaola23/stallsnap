@@ -317,3 +317,54 @@ describe("names with a digit or size", () => {
     expect(await priced(["Rice 50kg", "Beans"], "rice 50kg", 50, "rice 50kg")).toBeNull();
   });
 });
+
+// QA round 3 on PR #6 and B6 on #8: name numbers count as names only where that item's whole name is said.
+// A doubtful reading is asked about; a wrong price never goes through.
+describe("bare numbers in item names", () => {
+  async function priced(names: string[], said: string, naira: number, quote: string, item = 1) {
+    const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b6", names.map((name, i) => ({ item: i + 1, name })), [said]);
+    return r.lines[item - 1]!.price?.naira ?? null;
+  }
+  const RICE_FIRST = (other: string) => ["Rice", other];
+  for (const [other, said, naira, quote] of [
+    ["5 Alive", "rice na 5 to 8k", 8000, "8k"],
+    ["5 Alive", "rice na 5 to 8k", 8000, "rice na 5 to 8k"],
+    ["Eggs 30", "rice na 30 to 35 thousand", 35000, "35 thousand"],
+    ["Bread 500", "rice na 500 to 700", 700, "700"],
+  ] as const) {
+    test(`with ${other} listed, ${JSON.stringify(said)} is still a range and is asked`, async () => {
+      expect(await priced(RICE_FIRST(other), said, naira, quote)).toBeNull();
+    });
+  }
+  test("with 3 Crowns Milk listed, \"rice na 3 thousand\" is still ₦3,000", async () => {
+    expect(await priced(["Rice", "3 Crowns Milk"], "rice na 3 thousand", 3000, "rice na 3 thousand")).toBe(3000);
+  });
+  for (const [names, said, naira, quote, item] of [
+    [["Rice", "5 Alive"], "5 alive na 300", 300, "5 alive na 300", 2],
+    [["Rice", "Eggs 30"], "eggs 30 na 1500", 1500, "eggs 30 na 1500", 2],
+    [["Rice", "Bread 500"], "bread 500 na 700", 700, "bread 500 na 700", 2],
+    [["Rice", "3 Crowns Milk"], "3 crowns milk na 400", 400, "3 crowns milk na 400", 2],
+  ] as const) {
+    test(`${JSON.stringify(said)} prices ${names[item - 1]} at ${naira}`, async () => {
+      expect(await priced([...names], said, naira, quote, item)).toBe(naira);
+    });
+  }
+  test("the number in a name is never the price: \"bread 500\" alone isn't ₦500", async () => {
+    expect(await priced(["Rice", "Bread 500"], "bread 500", 500, "bread 500", 2)).toBeNull();
+  });
+  for (const [said, naira, quote] of [
+    ["2 rice 6000", 6000, "2 rice 6000"],
+    ["2 rice 6000", 6000, "rice 6000"],
+    ["2 rice 6000", 3000, "rice 6000"],
+    ["rice 2 bags 6000", 6000, "6000"],
+    ["10 rice 6000", 6000, "rice 6000"],
+  ] as const) {
+    test(`a quantity with the item: ${JSON.stringify(said)} quoted ${JSON.stringify(quote)} at ${naira} is asked`, async () => {
+      expect(await priced(["Rice", "Beans"], said, naira, quote)).toBeNull();
+    });
+  }
+  test("another item's price straight before is not a quantity: \"rice na 3000 beans na 1500\"", async () => {
+    expect(await priced(["Rice", "Beans"], "rice na 3000 beans na 1500", 1500, "beans na 1500", 2)).toBe(1500);
+  });
+});

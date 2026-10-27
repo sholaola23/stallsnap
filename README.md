@@ -4,7 +4,7 @@ StallSnap builds a priced catalogue for a market trader from a stall photo and a
 
 ## Before the event
 
-**Before the event:** on the morning of kickoff day (Mon 26 Oct 2026, roughly 8am to 11am UK time), the idea was planned and tested in a separate repo. None of that code, data or test material is in this repo. Everything here was written after kickoff at 4pm UK the same day.
+**Before the event:** on the morning of kickoff day (Mon 26 Oct 2026, roughly 8am to 1pm UK time), the idea was planned and tested in a separate repo. None of that code, data or test material is in this repo. Everything here was written after kickoff at 4pm UK the same day.
 
 ## Status
 

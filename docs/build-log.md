@@ -14,3 +14,4 @@ Dated record of what was built in this repo. All times are UK time. Everything h
 | Mon 26 Oct | PR 1, QA round 2 fixes: the `.env.example` guard catches `NAME=value` anywhere on a line (`## `, `# export `, `# e.g. `, `# - `); the test-location guard covers `.spec`, `_test` and `_spec` files in every JS and TS form; operator-chosen values such as `my-stallsnap-verify-2026` are no longer read as placeholders. |
 | Mon 26 Oct | PR 2, QA round 2 fix: a call whose worst case is under one micro-dollar still reserves one, so it is refused once the cap is spent. |
 | Mon 26 Oct | PR 3, QA round 2 fix: a step whose work throws now fails its job straight away, so a handler that lets the error bubble up can never leave the job open. |
+| Tue 27 Oct | PR 3, Grok review: example and test phone numbers are now obviously fake (`234800000000x`), not realistic Nigerian ones. |

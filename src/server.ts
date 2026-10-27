@@ -10,7 +10,7 @@ import { missingEnv, readEnv } from "./env.ts";
 import { JobLog } from "./joblog.ts";
 import { MetaClient } from "./meta/client.ts";
 import { realModels } from "./pipeline/models.ts";
-import { DEFAULT_LEDGER_PATH, SpendGuard } from "./spend-guard.ts";
+import { DEFAULT_LEDGER_PATH, MAX_CALLS_PER_JOB, SpendGuard } from "./spend-guard.ts";
 import { loadWebhookConfig } from "./whatsapp/config.ts";
 import { Conversation } from "./whatsapp/conversation.ts";
 import { GraphClient } from "./whatsapp/graph.ts";
@@ -36,6 +36,7 @@ if (missing.length === 0) {
     models: realModels(new MetaClient({ apiKey: readEnv("MODEL_API_KEY")!, guard })),
     publish: (s) => publishCatalogue(s, DATA_DIR, baseUrl!),
     dataDir: DATA_DIR,
+    callsLeft: (jobId) => MAX_CALLS_PER_JOB - guard.callsForJob(jobId),
   });
   handle = (msg) => conversation.handle(msg);
 } else {

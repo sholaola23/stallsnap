@@ -65,7 +65,7 @@ export function renderCatalogue(c: Catalogue, base: string): string {
 <body>
   <header>
     <h1>${escape(c.title)}</h1>
-    <p class="meta">${c.items.length} ${c.items.length === 1 ? "item" : "items"}${date ? `. Prices from ${date}` : ""}. Message the trader on WhatsApp to buy.</p>
+    <p class="meta">${c.items.length} ${c.items.length === 1 ? "item" : "items"}${date ? `. Prices from ${date}` : ""}.</p>
   </header>
   <main>
     <ul>

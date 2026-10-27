@@ -484,3 +484,110 @@ describe("whole price expressions", () => {
     });
   }
 });
+
+// QA B11 and B12 on #8: joiners between items, and selling words before a price.
+describe("joiners and selling words", () => {
+  async function price(said: string, item: number, naira: number, quote: string) {
+    const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b11", [{ item: 1, name: "Rice" }, { item: 2, name: "Garri" }], [said]);
+    return r.lines[item - 1]!.price?.naira ?? null;
+  }
+  for (const joiner of ["and", "then", "plus", "but", "while"]) {
+    test(`"rice na 1500 ${joiner} garri na 900" prices both`, async () => {
+      const said = `rice na 1500 ${joiner} garri na 900`;
+      expect(await price(said, 1, 1500, "rice na 1500")).toBe(1500);
+      expect(await price(said, 2, 900, "garri na 900")).toBe(900);
+    });
+  }
+  for (const said of ["rice go for 1500", "rice dey go for 1500", "rice we dey sell for 1500", "rice na for 1500", "rice i dey sell 1500"]) {
+    test(`${JSON.stringify(said)} is ₦1,500`, async () => {
+      expect(await price(said, 1, 1500, said)).toBe(1500);
+    });
+  }
+  test("a joiner with a number after it is not a joiner: \"rice na 1500 and 50\" is asked", async () => {
+    expect(await price("rice na 1500 and 50", 1, 1500, "rice na 1500")).toBeNull();
+    expect(await price("rice na 1500 and 50", 1, 1550, "rice na 1500 and 50")).toBeNull();
+  });
+  test("a joiner at the end with no next item is not allowed: \"rice na 1500 but\" is asked", async () => {
+    expect(await price("rice na 1500 but", 1, 1500, "rice na 1500")).toBeNull();
+  });
+  test("\"rice go for two 1000\" is still a quantity and is asked", async () => {
+    expect(await price("rice go for two 1000", 1, 1000, "rice go for two 1000")).toBeNull();
+  });
+});
+
+describe("neighbouring items: a price or quantity next to a name", () => {
+  async function price(names: string[], said: string, item: number, naira: number, quote: string) {
+    const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "nb", names.map((name, i) => ({ item: i + 1, name })), [said]);
+    return r.lines[item - 1]!.price?.naira ?? null;
+  }
+  const RB = ["Rice", "Beans"];
+  const asked: [string[], string, number, number, string][] = [
+    [["Rice", "Beans", "Garri"], "rice, beans, garri. 3000 beans, 1500 garri", 3, 3000, "garri 3000"],
+    [["Rice", "Beans", "Garri"], "rice, beans, garri. 3000 beans, 1500 garri", 2, 1500, "beans 1500"],
+    [["Rice", "Beans", "Garri"], "rice, beans, garri. 3000 beans, 1500 garri", 1, 3000, "3000"],
+    [RB, "rice dey, 3000 beans", 1, 3000, "rice dey 3000"],
+    [RB, "rice dey, 3000 beans", 1, 3000, "3000"],
+    [RB, "rice 3000, 2 beans 3500", 2, 3500, "beans 3500"],
+    [RB, "rice na 3000 and two beans na 3500", 2, 3500, "beans na 3500"],
+    [RB, "rice na 3000, 2 bags of beans 7000", 2, 7000, "beans 7000"],
+    [RB, "rice dey, 2 bags of beans 7000", 2, 7000, "beans 7000"],
+    [RB, "rice and beans na 3000", 2, 3000, "beans na 3000"],
+    [RB, "rice and beans na 3000", 1, 3000, "3000"],
+    [RB, "rice, beans na 3000", 2, 3000, "beans na 3000"],
+    [RB, "rice, beans na 3000", 1, 3000, "3000"],
+    [["Beans", "Eggs 30"], "beans na 1500 or 30", 1, 1500, "beans na 1500"],
+    [["Bread 500"], "bread 500 na 500 or 700", 1, 700, "700"],
+  ];
+  for (const [names, said, item, naira, quote] of asked) {
+    test(`${JSON.stringify(said)}: ${names[item - 1]} at ${naira} is asked`, async () => {
+      expect(await price(names, said, item, naira, quote)).toBeNull();
+    });
+  }
+  const priced: [string[], string, number, number, string][] = [
+    [RB, "rice 3000, 2 beans 3500", 1, 3000, "rice 3000"],
+    [RB, "rice 3000 beans 3500", 1, 3000, "rice 3000"],
+    [RB, "rice 3000 beans 3500", 2, 3500, "beans 3500"],
+    [["5 Alive", "3 Crowns Milk"], "5 alive na 650, 3 crowns milk na 900", 1, 650, "5 alive na 650"],
+    [["5 Alive", "3 Crowns Milk"], "5 alive na 650, 3 crowns milk na 900", 2, 900, "3 crowns milk na 900"],
+    [["3 Crowns Milk", "5 Alive"], "3 crowns milk na 900, 5 alive na 700", 1, 900, "3 crowns milk na 900"],
+    [["3 Crowns Milk", "5 Alive"], "3 crowns milk na 900, 5 alive na 700", 2, 700, "5 alive na 700"],
+    [["Rice", "5 Alive"], "rice na 2000, 5 alive na 650", 1, 2000, "rice na 2000"],
+    [["Rice", "5 Alive"], "rice na 2000, 5 alive na 650", 2, 650, "5 alive na 650"],
+  ];
+  for (const [names, said, item, naira, quote] of priced) {
+    test(`${JSON.stringify(said)}: ${names[item - 1]} is ₦${naira}`, async () => {
+      expect(await price(names, said, item, naira, quote)).toBe(naira);
+    });
+  }
+});
+
+describe("strict price chains", () => {
+  async function rice(said: string, naira: number) {
+    const spark = scriptedSpark([[setPrice(1, naira, "piece", said)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "chain", [{ item: 1, name: "Rice" }], [said]);
+    return r.lines[0]!.price?.naira ?? null;
+  }
+  const asked: [string, number][] = [
+    ["rice na 2k 3k", 5000], ["rice na 1k 1k", 2000], ["rice na 2 thousand 3 thousand", 5000],
+    ["rice na 5 hundred 6 hundred", 50600], ["rice na five hundred six hundred", 50600],
+    ["rice na 1 hundred hundred", 10000], ["rice na 2 and 3 thousand", 5000],
+    ["rice na 3 thousand 5", 3005], ["rice na two thousand five", 2005], ["rice na 2 million 3", 2000003],
+    ["rice na 3k 500", 3500], ["rice na 5 hundred and 5 hundred", 50500], ["rice na 2 thousand thousand", 3000],
+  ];
+  for (const [said, naira] of asked) {
+    test(`${JSON.stringify(said)} at ${naira} is asked`, async () => {
+      expect(await rice(said, naira)).toBeNull();
+    });
+  }
+  const priced: [string, number][] = [
+    ["rice na 3 thousand 5 hundred", 3500], ["rice na 5 hundred thousand", 500000], ["rice na 2 hundred and 50", 250],
+    ["rice na 3k 5 hundred", 3500], ["rice na 1 million", 1000000],
+  ];
+  for (const [said, naira] of priced) {
+    test(`${JSON.stringify(said)} is ₦${naira}`, async () => {
+      expect(await rice(said, naira)).toBe(naira);
+    });
+  }
+});

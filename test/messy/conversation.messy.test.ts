@@ -76,14 +76,14 @@ describe("odd orders and amounts", () => {
 
   test("two traders at once never see each other's lists", async () => {
     h = harness();
-    const other = (m: ReturnType<typeof msg.photo>) => ({ ...m, from: "2348031234567" });
+    const other = (m: ReturnType<typeof msg.photo>) => ({ ...m, from: "2348000000001" });
     await h.conversation.handle(msg.photo());
     await h.conversation.handle(other(msg.photo()));
     await h.conversation.handle(other(msg.voice("rice na 100, garri na 200")));
     await h.conversation.handle(msg.voice("rice na 6000, garri na 1500"));
     const lists = h.sent.filter((s) => s.kind === "button");
     expect(lists.find((l) => l.to === TRADER)!.body).toContain("₦6,000");
-    expect(lists.find((l) => l.to === "2348031234567")!.body).toContain("₦100");
+    expect(lists.find((l) => l.to === "2348000000001")!.body).toContain("₦100");
   });
 
   test(`more than ${MAX_INPUTS} messages of prices stops paid work`, async () => {
@@ -188,5 +188,87 @@ describe("QA round 1 on PR #8", () => {
     await h.conversation.handle(msg.photo("photo-bad"));
     const s = h.store.get(TRADER)!;
     expect(h.log.job(s.jobId)?.status).toBe("open");
+  });
+});
+
+// Grok review on PR #8.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MetaClient } from "../../src/meta/client.ts";
+import { priceItems } from "../../src/pipeline/pricing.ts";
+import { scriptedSpark, setPrice } from "../../src/pipeline/test-spark.ts";
+import { SpendGuard } from "../../src/spend-guard.ts";
+import { WORST_CALLS } from "../../src/whatsapp/conversation.ts";
+import { changeExample } from "../../src/whatsapp/copy.ts";
+
+describe("Grok review on PR #8", () => {
+  for (const names of [["Rice", "Garri"], ["Peak milk tin", "Tomato paste"], ["Ankara fabric"]]) {
+    test(`the list's own change example is accepted by the real price check (${names.join(", ")})`, async () => {
+      const lines = names.map((name, i) => ({ item: i + 1, name, price: null, question: null }));
+      const example = changeExample(lines);
+      expect(copy.list(lines)).toContain(`like "${example}"`);
+      const dir = mkdtempSync(join(tmpdir(), "grok8-"));
+      const guard = new SpendGuard({ ledgerPath: join(dir, "ledger.json"), paidCalls: "on" });
+      const spark = scriptedSpark([[setPrice(1, 1500, "piece", example)], "done"]);
+      const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "g8", names.map((name, i) => ({ item: i + 1, name })), [example]);
+      expect(r.lines[0]!.price?.naira).toBe(1500);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  }
+
+  for (const chat of ["thanks", "Thank you so much", "ok then", "how much do you charge?", "👍🏾 nice"]) {
+    test(`${JSON.stringify(chat)} after the list gets a hint and starts no paid pricing`, async () => {
+      await toList();
+      const priced = h.calls.price;
+      const changes = h.store.get(TRADER)!.changes;
+      await h.conversation.handle(msg.text(chat));
+      expect(h.calls.price).toBe(priced);
+      expect(h.store.get(TRADER)!.changes).toBe(changes);
+      expect(h.last().body).toBe(copy.changeHint(h.store.get(TRADER)!.lines));
+      expect(h.calls.publish).toBe(0);
+    });
+  }
+
+  test("a voice note after the list with no number in it is transcribed but not priced again", async () => {
+    await toList();
+    const priced = h.calls.price;
+    await h.conversation.handle(msg.voice("thank you my sister"));
+    expect(h.calls.price).toBe(priced);
+    expect(h.last().body).toBe(copy.changeHint(h.store.get(TRADER)!.lines));
+    expect(h.store.get(TRADER)!.phase).toBe("confirming");
+  });
+
+  test("a change is refused before any paid step when the job can't afford it", async () => {
+    let left = 100;
+    h = harness({ callsLeft: () => left });
+    await h.conversation.handle(msg.photo());
+    await h.conversation.handle(msg.voice("rice na 6000, garri na 1500"));
+    const priced = h.calls.price;
+    const transcribed = h.calls.transcribe;
+    left = WORST_CALLS.pricing + WORST_CALLS.transcript - 1;
+    await h.conversation.handle(msg.voice("rice na 7000"));
+    expect(h.last().body).toBe(copy.tooManyChanges);
+    expect(h.calls.price).toBe(priced);
+    expect(h.calls.transcribe).toBe(transcribed);
+    left = WORST_CALLS.pricing - 1;
+    await h.conversation.handle(msg.text("rice na 7000"));
+    expect(h.last().body).toBe(copy.tooManyChanges);
+    expect(h.calls.price).toBe(priced);
+    expect(h.store.get(TRADER)!.phase).toBe("confirming");
+  });
+
+  test("a first run whose cut-outs used up the budget stops with an accurate message before pricing", async () => {
+    let left = 100;
+    h = harness({ callsLeft: () => left, models: { cutouts: async () => ((left = 5), [{ name: "Rice", png: new Uint8Array([1]) }]) } });
+    await h.conversation.handle(msg.photo());
+    await h.conversation.handle(msg.voice("rice na 6000"));
+    expect(h.calls.price).toBe(0);
+    expect(h.last().body).toBe(copy.jobTooBig);
+    expect(h.store.get(TRADER)!.phase).toBe("failed");
+  });
+
+  test("by design, a whole job stays under the 60-call cap: the worst pricing round plus a voice note fits after the 35-call cut-out bound", () => {
+    expect(35 + WORST_CALLS.transcript + WORST_CALLS.pricing).toBeLessThan(60);
   });
 });

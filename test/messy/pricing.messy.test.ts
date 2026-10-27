@@ -88,8 +88,10 @@ describe("accepted, as the trader said it", () => {
   }
 });
 
-test("readSpoken reads every price in a range", () => {
-  expect(readSpoken("2000 to 2500").prices.map((p) => p.value)).toEqual([2000, 2500]);
+test("readSpoken reads a range as no price, with both ends unreadable", () => {
+  const r = readSpoken("2000 to 2500");
+  expect(r.prices).toEqual([]);
+  expect(r.unreadable).toEqual([0, 2]);
 });
 
 test("a duplicate of the same item in one turn: the last call wins", async () => {
@@ -226,4 +228,40 @@ describe("QA round 2 on PR #6", () => {
   test("still accepted: a real correction with \"no\"", async () => {
     expect(await priced("rice na 1500, no, 2000", setPrice(1, 2000, "bag", "no, 2000"))).toBe(2000);
   });
+});
+
+// Grok review on PR #6: a range must never become one price; the item is asked instead.
+describe("Grok review on PR #6: ranges", () => {
+  async function priced(said: string, call: ScriptedCall) {
+    const spark = scriptedSpark([[call], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "grok6", [{ item: 1, name: "Rice" }], [said]);
+    return r.lines[0]!;
+  }
+  for (const [said, naira, quote] of [
+    ["rice na 5-8 thousand", 5800, "rice na 5-8 thousand"],
+    ["rice na 5-8 thousand", 8000, "8 thousand"],
+    ["rice na 5-8k", 5800, "rice na 5-8k"],
+    ["rice 5 to 8k", 8000, "8k"],
+    ["rice 5 to 8k", 5000, "rice 5"],
+    ["rice na 1,000-1,200", 1000, "rice na 1,000"],
+    ["rice na 1,000-1,200", 1200, "1,200"],
+    ["rice na 1000 - 1200", 1200, "1200"],
+    ["rice two to three thousand", 3000, "three thousand"],
+    ["rice na 2000 or 2500", 2500, "2500"],
+  ] as const) {
+    test(`${JSON.stringify(said)} quoted as ${JSON.stringify(quote)} at ${naira} is asked, not priced`, async () => {
+      const line = await priced(said, setPrice(1, naira, "bag", quote));
+      expect(line.price).toBeNull();
+      expect(line.question).toBe("How much is Rice?");
+    });
+  }
+  for (const [said, naira, quote] of [
+    ["rice na 1-8", 1800, "rice na 1-8"],
+    ["rice na 3k", 3000, "rice na 3k"],
+    ["rice na two thousand five hundred", 2500, "rice na two thousand five hundred"],
+  ] as const) {
+    test(`still priced: ${JSON.stringify(said)} at ${naira}`, async () => {
+      expect((await priced(said, setPrice(1, naira, "bag", quote))).price?.naira).toBe(naira);
+    });
+  }
 });

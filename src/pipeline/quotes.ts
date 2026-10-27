@@ -45,18 +45,46 @@ const singular = (w: string) => (w.length > 3 && w.endsWith("es") && !w.endsWith
 
 /** Lower-cased words, keeping numbers whole: "₦1,500" -> "1500", "1.8" stays, "5-8" stays, "1000-1200" splits. */
 export function tokenize(text: string): string[] {
-  const t = text
-    .replace(/(^|\n)[ \t]*\d{1,2}[.)](?=\s)/g, "$1") // "1. Rice: 1500": a list number, never a quantity
+  return tokenizeBreaks(text).tokens;
+}
+
+/**
+ * Removes list numbers, which are never quantities: "1." or "2)" at the start of a line ("1. Rice: 1500"),
+ * and, within a line, the next number of a list already started ("1. rice 1500 2. beans 3500"). Any
+ * other "50." stays a number ("pure water na 50. gala na 200").
+ */
+function stripListNumbers(text: string): string {
+  let next = 0; // the list number expected next within a line; 0 when no list has started
+  return text.replace(/(^|\s)(\d{1,2})[.)](?=\s)/g, (m, space: string, n: string, at: number) => {
+    const lineStart = /(^|\n)[ \t]*$/.test(text.slice(0, at + space.length));
+    if (lineStart || Number(n) === next) {
+      next = Number(n) + 1;
+      return space;
+    }
+    return m;
+  });
+}
+
+/** The same words, and the positions of words that follow a comma, full stop, colon or new line. */
+function tokenizeBreaks(text: string): { tokens: string[]; breaks: Set<number> } {
+  const t = stripListNumbers(text)
     .toLowerCase()
     .replace(/[​-‍⁠﻿]/g, "")
     .replace(/₦/g, " ")
     .replace(/(\d),(?=\d{3}\b)/g, "$1") // 1,500 -> 1500
     .replace(/(\d+)\s*-\s*(\d+)/g, (_m, a: string, b: string) => (a.length === 1 && b.length === 1 ? `${a}-${b}` : `${a} - ${b}`))
     .replace(/(\d)\.(?=\d)/g, "$1\u0000") // protect decimal points
-    .replace(/[^\p{L}\p{N}\u0000\- ]+/gu, " ")
+    .replace(/[,;:.!?\n]+/g, " \u0001 ")
+    .replace(/[^\p{L}\p{N}\u0000\u0001\- ]+/gu, " ")
     .replace(/\u0000/g, ".")
     .replace(/(^|\s)-|-(\s|$)/g, " ");
-  return t.split(/\s+/).filter(Boolean);
+  const tokens: string[] = [];
+  const breaks = new Set<number>();
+  for (const w of t.split(/\s+/)) {
+    if (w === "\u0001") breaks.add(tokens.length);
+    else if (w) tokens.push(w);
+  }
+  return { tokens, breaks };
 }
 
 function digitValue(token: string, next: string | undefined): { value: number; consumed: number } | "unreadable" | undefined {
@@ -325,7 +353,7 @@ type Segment = { item: number; start: number; end: number; price?: { value: numb
 
 /** Splits one message at the listed items' names, and reads each item's price if it has the one plain shape. */
 export function segments(text: string, items: readonly QuoteItem[]): { tokens: string[]; segments: Segment[] } {
-  const tokens = tokenize(text);
+  const { tokens, breaks } = tokenizeBreaks(text);
   const words = tokens.map(nameWord);
   const keys = itemKeys(items);
   const nameSets = new Map(items.map((it) => [it.item, new Set(tokenize(it.name).map(nameWord))]));
@@ -424,15 +452,28 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
       reversed = true;
       continue;
     }
-    // Was that number the previous item's price ("rice 3000 beans 3500"), or a quantity for this one
-    // ("rice 3000, 2 beans 3500")? If the previous item has a price without it, it's a quantity.
-    // A number with packaging words before the name ("2 bags of beans") is always a quantity.
-    const trimmed = parseBody(runs[n - 1]!.end, before, true);
-    if (trimmed?.price || before < runs[n]!.start - 1) {
-      apply(prev, trimmed);
-      seg.price = undefined;
-      seg.unclear = "a number straight before the item (a quantity?) makes the price unclear";
+    const quantity = "a number straight before the item (a quantity?) makes the price unclear";
+    const p = prev.price;
+    if (p && p.from <= before && before < p.to) {
+      // The number is the previous item's whole price ("rice na 15 thousand, garri na 900"). It stays
+      // that item's price if a comma or full stop follows it ("rice na 3000, beans 3500"), or if both
+      // items are said the same way ("rice 3000 beans 3500"). A comma before it ("I get rice, 10 beans
+      // 3500") or a different shape ("rice dey 30 eggs 2500") could be a quantity: both are asked.
+      const after = breaks.has(p.to);
+      const sameShape = seg.price !== undefined && tokens.slice(runs[n - 1]!.end, p.from).join(" ") === tokens.slice(runs[n]!.end, seg.price.from).join(" ");
+      if (!after && (breaks.has(p.from) || !sameShape)) {
+        prev.price = seg.price = undefined;
+        prev.unclear = seg.unclear = "a number between two items could be either item's price or a quantity, so ask";
+      }
+      continue;
     }
+    // Otherwise the number is a quantity for this item ("rice 3000, 2 beans 3500", "2 bags of beans"),
+    // or the previous item's only, unclear number ("rice dey, two beans 3500"). This item is asked, and
+    // the previous one keeps a price only if it has one without that number.
+    const trimmed = parseBody(runs[n - 1]!.end, before, true);
+    apply(prev, trimmed ?? { unclear: quantity });
+    seg.price = undefined;
+    seg.unclear = quantity;
   }
   if (reversed) {
     for (const seg of out) {

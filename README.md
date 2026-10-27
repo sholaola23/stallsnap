@@ -123,6 +123,7 @@ One price is one number: digits or number words, with an optional N/₦ or "nair
 | A range or a choice | "5-8 thousand", "5 to 8k", "1,000-1,200", "2000 or 2500", "eggs 30 to 35 thousand" |
 | Two prices run together | "2k 3k", "5 hundred 6 hundred", "1 hundred hundred", "3 thousand 5", "3k 500" |
 | A price before a name, or two names before one price | "rice, beans. 3000 beans, 1500 garri", "rice dey, 3000 beans", "rice and beans na 3000" |
+| A number between two items that could be a quantity | "I get rice, 10 beans 3500", "rice dey 30 beans 3500" (both asked; "rice 3000 beans 3500" and "rice 3000, beans 3500" price both) |
 | A quantity | "rice 3000, 2 beans 3500" (Beans), "2 7up 600", "2 bags of rice 6000", "3 tins of peak milk 1500", "rice for two 1000", "rice 500 each" |
 | Anything else after the price | "rice 500, 2000 for five", "rice na 3000 add am to beans" |
 | A number that can't be read | "1,5OO" (letter O), "650.50" |
@@ -130,7 +131,7 @@ One price is one number: digits or number words, with an optional N/₦ or "nair
 | Two items with the same name | two items both called "Tomato" |
 | The quote isn't the trader's words for this item, with its latest price | a made-up quote; Rice's price used for Beans; "3000" after "no, 3500" |
 
-A number word matches a digit in a name ("five alive" is 5 Alive), and a list number at the start of a line ("1. Rice: ₦1,500") is not a quantity. A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
+`test/golden/everyday.test.ts` holds 40 ordinary voice notes and lists with the exact price for every item, and CI runs it, so a parser change can never quietly break an everyday note. A number word matches a digit in a name ("five alive" is 5 Alive), and a list number at the start of a line ("1. Rice: ₦1,500") is not a quantity. A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
 
 A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 

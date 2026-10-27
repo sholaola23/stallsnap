@@ -523,6 +523,7 @@ describe("neighbouring items: a price or quantity next to a name", () => {
     return r.lines[item - 1]!.price?.naira ?? null;
   }
   const RB = ["Rice", "Beans"];
+  const RG2 = ["Rice", "Garri"];
   const asked: [string[], string, number, number, string][] = [
     [["Rice", "Beans", "Garri"], "rice, beans, garri. 3000 beans, 1500 garri", 3, 3000, "garri 3000"],
     [["Rice", "Beans", "Garri"], "rice, beans, garri. 3000 beans, 1500 garri", 2, 1500, "beans 1500"],
@@ -543,6 +544,18 @@ describe("neighbouring items: a price or quantity next to a name", () => {
     [["Rice", "3 Crowns Milk"], "rice na 2000, three crowns na 900", 1, 2000, "rice na 2000"],
     // Without the list punctuation, a number before the name is still a quantity.
     [["Rice"], "1 rice 1500", 1, 1500, "rice 1500"],
+    // QA on 830278e: a number that is the earlier item's only number, with a comma before it or a
+    // different shape, could be a quantity for the next item. Both are asked.
+    [["Rice", "Eggs"], "rice dey, 30 eggs 2500", 1, 30, "rice dey 30"],
+    [["Rice", "Eggs"], "rice dey, 30 eggs 2500", 2, 2500, "eggs 2500"],
+    [RB, "I get rice, 10 beans 3500", 1, 10, "rice 10"],
+    [RB, "I get rice, 10 beans 3500", 2, 3500, "beans 3500"],
+    [RB, "rice dey, two beans 3500", 2, 3500, "beans 3500"],
+    [RB, "rice dey 30 beans 3500", 2, 3500, "beans 3500"],
+    [RB, "rice dey 30 beans 3500", 1, 30, "rice dey 30"],
+    // B15 on 026bbf8: the scale word belongs to the earlier price, so ₦15 is never accepted.
+    [RG2, "rice na 15 thousand, garri na 900", 1, 15, "rice na 15"],
+    [RG2, "rice na 5 hundred. garri na 900", 1, 5, "rice na 5"],
   ];
   for (const [names, said, item, naira, quote] of asked) {
     test(`${JSON.stringify(said)}: ${names[item - 1]} at ${naira} is asked`, async () => {

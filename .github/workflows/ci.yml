@@ -58,3 +58,5 @@ jobs:
         run: bun run test
       - name: Messy-input suite
         run: bun run test:messy
+      - name: Everyday voice notes (golden)
+        run: bun run test:golden

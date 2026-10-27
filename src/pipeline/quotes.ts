@@ -221,6 +221,10 @@ export type QuoteContext = {
 const CONNECTORS = new Set(["na", "is", "for", "at", "be"]);
 /** Words that may sit around a price without changing it. */
 const FILLERS = new Set(["the", "a", "my", "dey", "don", "now", "o", "oh", "abeg", "sef", "e", "just", "only", "it", "its", "price"]);
+/** Selling words before a price: "rice go for 1500", "we dey sell for 1500". */
+const SELLING = new Set(["go", "we", "i", "sell", "sells", "selling", "cost", "costs"]);
+/** Words joining one item's price to the next item: "rice na 1500 and garri na 900". */
+const JOINERS = new Set(["and", "then", "plus", "but", "while", "also"]);
 /** Packaging and size words: "rice crate na 5-8", "one cup", "for one paint". */
 const PACK = new Set([...GENERIC].filter((w) => !["the", "and", "of", "with", "for", "per", "one", "new"].includes(w)));
 const ONE = new Set(["one", "1", "a", "an"]);
@@ -291,7 +295,9 @@ function parsePrice(tokens: string[], i: number): { value: number; end: number }
       continue;
     }
     const next = tokens[j + 1] ?? "";
-    if (t === "and" && any && (/^\d+$/.test(next) || next in NUMBER_WORDS)) {
+    // "2 hundred and 50": "and" continues a number only straight after a multiplier.
+    const prev = tokens[j - 1] ?? "";
+    if (t === "and" && any && (prev === "hundred" || THOUSAND_WORDS.has(prev) || prev === "million") && (/^\d+$/.test(next) || next in NUMBER_WORDS)) {
       afterScale = true;
       j++;
       continue;
@@ -345,9 +351,15 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
         else return;
       }
     };
-    skip();
-    if (CONNECTORS.has(tokens[j]!)) j++;
-    skip();
+    // Filler, selling words and connectors, in any order: "go for", "dey sell for", "na for".
+    const lead = () => {
+      for (;;) {
+        skip();
+        if (j < seg.end && (CONNECTORS.has(tokens[j]!) || SELLING.has(tokens[j]!))) j++;
+        else return;
+      }
+    };
+    lead();
     let price = parsePrice(tokens, j);
     if (!price || price.end > seg.end) return void (seg.unclear = "the words after the item aren't one plain price");
     let found = { value: price.value, from: j, to: price.end };
@@ -356,9 +368,7 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
       skip();
       if (!CORRECTIONS.has(tokens[j]!) && !(tokens[j] === "i" && tokens[j + 1] === "mean")) break;
       while (j < seg.end && (CORRECTIONS.has(tokens[j]!) || tokens[j] === "i")) j++;
-      skip();
-      if (CONNECTORS.has(tokens[j]!)) j++;
-      skip();
+      lead();
       price = parsePrice(tokens, j);
       if (!price || price.end > seg.end) return void (seg.unclear = "a correction without one plain new price");
       found = { value: price.value, from: j, to: price.end };
@@ -367,6 +377,7 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
     // Only "naira", "per <unit>", "for one <unit>" and filler or packaging words may follow.
     while (j < seg.end) {
       if (FILLERS.has(tokens[j]!) || PACK.has(singular(tokens[j]!)) || tokens[j] === "naira") j++;
+      else if (JOINERS.has(tokens[j]!) && n + 1 < out.length && tokens.slice(j + 1, seg.end).every((w) => FILLERS.has(w) || JOINERS.has(w))) j++;
       else if (tokens[j] === "per" && j + 1 < seg.end && !isNumberToken(tokens[j + 1]!)) j += 2;
       else if (tokens[j] === "for" && j + 2 < seg.end + 1 && ONE.has(tokens[j + 1]!) && tokens[j + 2] !== undefined && j + 2 < seg.end && !isNumberToken(tokens[j + 2]!)) j += 3;
       else return void (seg.unclear = `"${tokens.slice(found.to, seg.end).join(" ")}" after the price makes it unclear`);

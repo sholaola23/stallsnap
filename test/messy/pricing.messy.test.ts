@@ -484,3 +484,34 @@ describe("whole price expressions", () => {
     });
   }
 });
+
+// QA B11 and B12 on #8: joiners between items, and selling words before a price.
+describe("joiners and selling words", () => {
+  async function price(said: string, item: number, naira: number, quote: string) {
+    const spark = scriptedSpark([[setPrice(item, naira, "piece", quote)], "done"]);
+    const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b11", [{ item: 1, name: "Rice" }, { item: 2, name: "Garri" }], [said]);
+    return r.lines[item - 1]!.price?.naira ?? null;
+  }
+  for (const joiner of ["and", "then", "plus", "but", "while"]) {
+    test(`"rice na 1500 ${joiner} garri na 900" prices both`, async () => {
+      const said = `rice na 1500 ${joiner} garri na 900`;
+      expect(await price(said, 1, 1500, "rice na 1500")).toBe(1500);
+      expect(await price(said, 2, 900, "garri na 900")).toBe(900);
+    });
+  }
+  for (const said of ["rice go for 1500", "rice dey go for 1500", "rice we dey sell for 1500", "rice na for 1500", "rice i dey sell 1500"]) {
+    test(`${JSON.stringify(said)} is ₦1,500`, async () => {
+      expect(await price(said, 1, 1500, said)).toBe(1500);
+    });
+  }
+  test("a joiner with a number after it is not a joiner: \"rice na 1500 and 50\" is asked", async () => {
+    expect(await price("rice na 1500 and 50", 1, 1500, "rice na 1500")).toBeNull();
+    expect(await price("rice na 1500 and 50", 1, 1550, "rice na 1500 and 50")).toBeNull();
+  });
+  test("a joiner at the end with no next item is not allowed: \"rice na 1500 but\" is asked", async () => {
+    expect(await price("rice na 1500 but", 1, 1500, "rice na 1500")).toBeNull();
+  });
+  test("\"rice go for two 1000\" is still a quantity and is asked", async () => {
+    expect(await price("rice go for two 1000", 1, 1000, "rice go for two 1000")).toBeNull();
+  });
+});

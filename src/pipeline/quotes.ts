@@ -103,12 +103,20 @@ function wordValue(tokens: string[], i: number): { value: number; consumed: numb
 }
 
 /** Every price expression in a message, with the token it starts at. */
-export function readSpoken(text: string): Spoken {
+/**
+ * Reads every price in `text`. Words in `nameWords` (item-name words with a digit in them, such as
+ * "400g" or "7up") are part of a name, not numbers.
+ */
+export function readSpoken(text: string, nameWords: ReadonlySet<string> = new Set()): Spoken {
   const tokens = tokenize(text);
   let prices: Price[] = [];
   const unreadable: number[] = [];
   const numbers: { at: number; end: number }[] = []; // every number, small ones too, for finding ranges
   for (let i = 0; i < tokens.length; ) {
+    if (nameWords.has(tokens[i]!)) {
+      i++;
+      continue;
+    }
     const d = digitValue(tokens[i]!, tokens[i + 1]);
     if (d === "unreadable") {
       unreadable.push(i);
@@ -150,7 +158,8 @@ export type QuoteItem = { item: number; name: string; unit?: string };
 
 /** The words that pick out an item, with packaging words added only where two items would otherwise look the same. */
 export function itemKeys(items: readonly QuoteItem[]): Map<number, string[]> {
-  const distinctive = (name: string) => [...new Set(tokenize(name).map(singular).filter((w) => w.length >= 3 && !GENERIC.has(w)))];
+  // Sizes and numbers in a name ("400g", "50kg") aren't needed to say which item, unless two items differ only by them.
+  const distinctive = (name: string) => [...new Set(tokenize(name).map(singular).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/\d/.test(w)))];
   const keys = new Map<number, string[]>();
   for (const it of items) {
     let key = distinctive(it.name);
@@ -159,6 +168,11 @@ export function itemKeys(items: readonly QuoteItem[]): Map<number, string[]> {
     keys.set(it.item, key);
   }
   return keys;
+}
+
+/** Item-name words with a digit in them, which are read as names, not numbers. */
+export function nameNumberWords(items: readonly QuoteItem[]): Set<string> {
+  return new Set(items.flatMap((it) => tokenize(it.name).filter((w) => /\d/.test(w))));
 }
 
 /** Token positions where the item is mentioned: all its key words within a few words of each other. */
@@ -200,7 +214,8 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
     return no("another item has the same name, so the trader must say which one");
   }
 
-  const q = readSpoken(quote);
+  const nameWords = nameNumberWords(ctx.items);
+  const q = readSpoken(quote, nameWords);
   if (q.tokens.length === 0) return no("quote must be the trader's exact words from the transcript");
   if (q.unreadable.length > 0) return no("the number in the quote can't be read safely (a letter inside a number)");
   const values = [...new Set(q.prices.map((p) => p.value))];
@@ -208,7 +223,7 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   if (values.length > 1) return no("the quote has more than one price; a range or a choice is not a price, so ask the trader");
   if (values[0] !== naira) return no(`price_naira ${naira} doesn't match the price in the quote (${values[0]})`);
 
-  const messages = ctx.said.map(readSpoken);
+  const messages = ctx.said.map((t) => readSpoken(t, nameWords));
   let m = -1;
   let at = -1;
   for (let i = messages.length - 1; i >= 0 && m < 0; i--) {

@@ -253,6 +253,15 @@ export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, qu
   const group = stretch.some((w) => GROUP_WORDS.has(w));
   if (msg.unreadable.some((p) => p >= from && p < to)) return no("a number near the quote can't be read safely, so ask the trader");
 
+  // "2 7up 600": a small number straight before the item is a quantity, so the price might be for all of them
+  // or for each one. That's for the trader to say. (A number after "na" is another item's price, not a quantity.)
+  const before = msg.tokens[from - 1];
+  // Digits only: number words run on across sentences once punctuation is gone ("... one one. Milo strip").
+  const beforeValue = before !== undefined && /^\d+$/.test(before) ? Number(before) : undefined;
+  if (beforeValue !== undefined && beforeValue < 100 && msg.tokens[from - 2] !== "na") {
+    return no("a quantity before the item makes the price unclear (for all of them, or each?), so ask the trader");
+  }
+
   // The quote's price must be the trader's last word on the item.
   const near = msg.prices.filter((p) => p.at >= from && p.at < to && p.value !== quoted.value);
   if (near.some((p) => p.at > quoted.at)) return no("the trader gave another price for this item after the quote; ask which is right");

@@ -27,17 +27,19 @@ const run = (turns: Parameters<typeof scriptedSpark>[0], s = said) => {
   return { spark, result: priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "job1", items, s) };
 };
 
+// The Milo part of `said` is messy ("hundred hundred naira, one one", then "Milo strip na 1,000... no no,
+// the sachet na 100"). Under the allow-list grammar it is asked, not priced (changed and reported).
 test("prices what the trader said, asks about the rest, and stops as soon as every item is decided", async () => {
-  const { spark, result } = run([[setPrice(1, 650, "tin", "Peak milk na 650"), setPrice(2, 100, "sachet", "the sachet na 100"), flag(3, "How much is one pack of Indomie?")]]);
+  const { spark, result } = run([[setPrice(1, 650, "tin", "Peak milk na 650"), setPrice(2, 100, "sachet", "the sachet na 100"), flag(3, "How much is one pack of Indomie?")], [flag(2, "x")]]);
   const r = await result;
   expect(r.stopped).toBe("all-done");
   expect(r.lines).toEqual([
     { item: 1, name: "Peak milk tin", price: { naira: 650, unit: "tin", quote: "Peak milk na 650" }, question: null },
-    { item: 2, name: "Milo sachet", price: { naira: 100, unit: "sachet", quote: "the sachet na 100" }, question: null },
+    { item: 2, name: "Milo sachet", price: null, question: "How much is Milo sachet?" },
     { item: 3, name: "Indomie pack", price: null, question: "How much is Indomie pack?" },
   ]);
-  expect(spark.calls).toHaveLength(1);
-  expect(guard.callsForJob("job1")).toBe(1);
+  expect(spark.calls).toHaveLength(2);
+  expect(guard.callsForJob("job1")).toBe(2);
 });
 
 describe("never guesses", () => {
@@ -65,8 +67,9 @@ describe("never guesses", () => {
 });
 
 test("a later correction wins over an earlier price", async () => {
-  const r = await run([[setPrice(2, 1000, "strip", "Milo strip na 1,000")], [setPrice(2, 100, "sachet", "the sachet na 100")], "done"]).result;
-  expect(r.lines[1]!.price).toEqual({ naira: 100, unit: "sachet", quote: "the sachet na 100" });
+  const corrected = ["Milo sachet na 1,000... no no, 100"];
+  const r = await run([[setPrice(2, 1000, "sachet", "Milo sachet na 1,000")], [setPrice(2, 100, "sachet", "no no, 100")], "done"], corrected).result;
+  expect(r.lines[1]!.price).toEqual({ naira: 100, unit: "sachet", quote: "no no, 100" });
 });
 
 test("history is replayed statelessly with encrypted reasoning and matching call ids", async () => {

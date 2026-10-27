@@ -161,7 +161,7 @@ Each message is split at the listed items' names. A name is said when a run of t
 - optionally a correction ("no", "sorry", "I mean") and a new price, where the last one wins;
 - then only "naira", "per bag", "for one paint" or filler words.
 
-One price is one number: digits or number words, with an optional N/₦ or "naira" and an optional k, thousand or hundred. `650` is 650, `₦6,000` and `N 6000` are 6,000, `3k`, `3 thousand` and `three thousand` are 3,000, `5 hundred` is 500, `2 thousand 5 hundred`, `2.5k` and `2k5` are 2,500, `1.8` is 1,800, `1.500` is 1,500, and `5-8` on its own is 5,800.
+One price is one number: digits or number words, with an optional N/₦ or "naira" and an optional k, thousand or hundred. `650` is 650, `₦6,000` and `N 6000` are 6,000, `3k`, `3 thousand` and `three thousand` are 3,000, `5 hundred` is 500, `5 hundred thousand` is 500,000, `2 thousand 5 hundred`, `2.5k` and `2k5` are 2,500, `1.8` is 1,800, `1.500` is 1,500, and `5-8` on its own is 5,800.
 
 | Asked back instead of priced | Examples |
 |---|---|

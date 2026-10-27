@@ -226,41 +226,81 @@ const PACK = new Set([...GENERIC].filter((w) => !["the", "and", "of", "with", "f
 const ONE = new Set(["one", "1", "a", "an"]);
 const isNumberToken = (w: string) => /\d/.test(w) || w in NUMBER_WORDS || w in SCALES;
 
-/** One price expression starting at `i`: its value and the position after it, or undefined. */
+/**
+ * One price expression starting at `i`, parsed as a whole: its value and the position after it, or
+ * undefined when it can't be read exactly. Digits and number words chain with multipliers, as said:
+ * "5 hundred thousand" is 500,000, "3 thousand 5 hundred" and "3k 5 hundred" are 3,500,
+ * "2 hundred and 50" is 250. Single-token forms: "2k5", "2.5k", "1.8" (1,800), "1.500", "5-8".
+ */
 function parsePrice(tokens: string[], i: number): { value: number; end: number } | undefined {
   let j = i;
   if (tokens[j] === "n" && /^\d/.test(tokens[j + 1] ?? "")) j++; // "N 500"
-  const t = tokens[j];
-  if (t === undefined) return undefined;
-  let value: number;
-  const k5 = /^n?(\d{1,3})k(\d)$/.exec(t); // "2k5" is 2,500
-  if (k5) {
-    value = Number(k5[1]) * 1000 + Number(k5[2]) * 100;
-    j++;
-  } else {
-    const h = hundreds(tokens, j);
-    const d = h ?? digitValue(t, tokens[j + 1]);
-    if (d === "unreadable") return undefined;
-    if (d) {
-      value = d.value;
-      j += d.consumed;
-      // "2 thousand 5 hundred"
-      if (THOUSAND_WORDS.has(tokens[j - 1]!)) {
-        const more = hundreds(tokens, j);
-        if (more && more.value < 1000) {
-          value += more.value;
-          j += more.consumed;
-        }
-      }
-    } else {
-      const w = wordValue(tokens, j);
-      if (!w || (w.value < 10 && w.consumed === 1)) return undefined;
-      value = w.value;
-      j += w.consumed;
-    }
+  const first = tokens[j]?.replace(/^n(?=\d)/, "");
+  if (first === undefined) return undefined;
+  const withNaira = (value: number, end: number) => ({ value, end: tokens[end] === "naira" ? end + 1 : end });
+  const k5 = /^(\d{1,3})k(\d)$/.exec(first);
+  if (k5) return withNaira(Number(k5[1]) * 1000 + Number(k5[2]) * 100, j + 1);
+  if (/^\d+\.\d+k?$/.test(first) || /^\d-\d$/.test(first)) {
+    if (tokens[j + 1] === "hundred") return undefined; // "1.5 hundred": unclear
+    const d = digitValue(first, tokens[j + 1]);
+    return d && d !== "unreadable" ? withNaira(d.value, j + d.consumed) : undefined;
   }
-  if (tokens[j] === "naira") j++;
-  return { value, end: j };
+  // A chain of numbers and multipliers.
+  let total = 0;
+  let current: number | undefined;
+  let any = false;
+  let afterScale = true; // a plain number may start the chain, or follow a multiplier
+  let small = true; // a lone word under ten ("one") isn't a price
+  const start = j;
+  for (;;) {
+    const t = j === start ? first : tokens[j];
+    if (t === undefined) break;
+    const m = /^(\d+)(k)?$/.exec(t);
+    if (m && afterScale) {
+      current = (current ?? 0) + Number(m[1]);
+      any = true;
+      small = false;
+      j++;
+      if (m[2]) {
+        total += current * 1000;
+        current = undefined;
+      } else afterScale = false;
+      continue;
+    }
+    if (t in NUMBER_WORDS && (afterScale || (current !== undefined && current % 100 === 0 && NUMBER_WORDS[t]! < 100))) {
+      current = (current ?? 0) + NUMBER_WORDS[t]!;
+      if (NUMBER_WORDS[t]! >= 10) small = false;
+      any = true;
+      afterScale = false;
+      j++;
+      continue;
+    }
+    if (t === "hundred" && any && current !== undefined) {
+      current *= 100;
+      small = false;
+      afterScale = true;
+      j++;
+      continue;
+    }
+    if ((THOUSAND_WORDS.has(t) || t === "million") && any) {
+      total += (current ?? 1) * (t === "million" ? 1_000_000 : 1000);
+      current = undefined;
+      small = false;
+      afterScale = true;
+      j++;
+      continue;
+    }
+    const next = tokens[j + 1] ?? "";
+    if (t === "and" && any && (/^\d+$/.test(next) || next in NUMBER_WORDS)) {
+      afterScale = true;
+      j++;
+      continue;
+    }
+    break;
+  }
+  if (!any || small) return undefined;
+  if (/\d/.test(tokens[j] ?? "")) return undefined; // a letter inside a number, or a second number
+  return withNaira(total + (current ?? 0), j);
 }
 
 type Segment = { item: number; start: number; end: number; price?: { value: number; from: number; to: number }; unclear?: string };

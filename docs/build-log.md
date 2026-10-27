@@ -30,3 +30,4 @@ Dated record of what was built in this repo. All times are UK time. Everything h
 | Mon 26 Oct | PR 4c: CI only. ffmpeg packages are cached, apt falls back from the Azure mirror, and a newer push cancels the older run on the same branch (the same workflow change as #11, put here so #6's own checks stop failing on the mirror). |
 | Tue 27 Oct | PR 3, Grok review: example and test phone numbers are now obviously fake (`234800000000x`), not realistic Nigerian ones. |
 | Tue 27 Oct | PR 4c, Grok review: a range is never read as one price. "5-8 thousand" (was 5,800) and "two to three thousand" (was 3,000) are now asked back, as are "5 to 8k", "1,000-1,200" and "2000 or 2500": both ends of a range are unreadable. |
+| Tue 27 Oct | PR 5a, Grok review: Graph calls time out after 30 s and media downloads after 60 s, and the access token is only sent to Meta's media hosts (a look-alike host, another port or plain http is refused before any request). |

@@ -253,8 +253,8 @@ export type QuoteContext = {
 const CONNECTORS = new Set(["na", "is", "for", "at", "be"]);
 /** Words that may sit around a price without changing it. */
 const FILLERS = new Set(["the", "a", "my", "dey", "don", "now", "o", "oh", "abeg", "sef", "e", "just", "only", "it", "its", "price"]);
-/** Selling words before a price: "rice go for 1500", "we dey sell for 1500". */
-const SELLING = new Set(["go", "we", "i", "sell", "sells", "selling", "cost", "costs"]);
+/** Selling words before a price: "rice go for 1500", "we dey sell for 1500", "we dey sell am 1500". */
+const SELLING = new Set(["go", "we", "i", "sell", "sells", "selling", "cost", "costs", "am"]);
 /** Words joining one item's price to the next item: "rice na 1500 and garri na 900". */
 const JOINERS = new Set(["and", "then", "plus", "but", "while", "also"]);
 /** Packaging and size words: "rice crate na 5-8", "one cup", "for one paint". */
@@ -445,7 +445,7 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
     // "rice and beans na 3000", "rice, beans na 3000": two names before one price. Both are asked.
     if (has(seg) && between.every((w) => JOINERS.has(w) || w === "or")) {
       prev.price = seg.price = undefined;
-      prev.unclear = seg.unclear = "two items named before one price; ask which price is for which";
+      prev.unclear = seg.unclear = "two items are named before one price, so it could be for either or both";
       continue;
     }
     // Look back past up to three packaging words and "of": "2 bags of beans".
@@ -468,7 +468,7 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
       const sameShape = seg.price !== undefined && tokens.slice(runs[n - 1]!.end, p.from).join(" ") === tokens.slice(runs[n]!.end, seg.price.from).join(" ");
       if (!after && (breaks.has(p.from) || !sameShape)) {
         prev.price = seg.price = undefined;
-        prev.unclear = seg.unclear = "a number between two items could be either item's price or a quantity, so ask";
+        prev.unclear = seg.unclear = "a number between two items could be either item's price or a quantity";
       }
       continue;
     }
@@ -484,7 +484,7 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
     for (const seg of out) {
       if (has(seg) || tokens.slice(seg.start, seg.end).some(isNumberToken)) {
         seg.price = undefined;
-        seg.unclear = "prices and names come in a different order in this message, so ask which price is for which";
+        seg.unclear = "prices and names come in a different order in this message, so it isn't clear which price is for which item";
       }
     }
   }
@@ -501,8 +501,12 @@ function findAll(hay: string[], needle: string[]): number[] {
   return out;
 }
 
+/** A safety net: a stall price under this is far more likely a misheard number or a quantity than a price. */
+export const MIN_PRICE = 50;
+
 export function checkQuote(ctx: QuoteContext, item: QuoteItem, naira: number, quote: string): Verdict {
   const no = (reason: string): Verdict => ({ ok: false, reason });
+  if (naira < MIN_PRICE) return no(`a price under ₦${MIN_PRICE} is more likely a quantity or a misheard number`);
   const keys = itemKeys(ctx.items);
   const key = keys.get(item.item)!;
   if (ctx.items.some((o) => o.item !== item.item && keys.get(o.item)!.join(" ") === key.join(" "))) {

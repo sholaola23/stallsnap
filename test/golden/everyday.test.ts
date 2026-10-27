@@ -87,10 +87,15 @@ describe("everyday voice notes: every item gets exactly the price said", () => {
       const spark = scriptedSpark([calls, "done"]);
       const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "golden", items, [said]);
       expect(r.lines.map((l) => l.price?.naira ?? null)).toEqual(prices);
-      // And another item's price is never accepted for this one.
-      for (const it of items) {
-        for (const other of prices.filter((p) => p !== prices[it.item - 1])) {
-          expect(checkQuote({ items, said: [said], used: new Map() }, it, other, said).ok).toBe(false);
+      // And another item's price is never accepted for this one, even quoted with this item's own words
+      // or with the other item's words.
+      for (const s of segs) {
+        const it = items[s.item - 1]!;
+        for (const o of segs.filter((o) => prices[o.item - 1] !== prices[s.item - 1])) {
+          for (const words of [s, o]) {
+            const quote = tokens.slice(words.start, words.price!.to).join(" ");
+            expect(checkQuote({ items, said: [said], used: new Map() }, it, prices[o.item - 1]!, quote).ok).toBe(false);
+          }
         }
       }
     });

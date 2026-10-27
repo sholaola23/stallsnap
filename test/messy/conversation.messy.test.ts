@@ -203,7 +203,7 @@ import { WORST_CALLS } from "../../src/whatsapp/conversation.ts";
 import { changeExample } from "../../src/whatsapp/copy.ts";
 
 describe("Grok review on PR #8", () => {
-  for (const names of [["Rice", "Garri"], ["Peak milk tin", "Tomato paste"], ["Ankara fabric"]]) {
+  for (const names of [["Rice", "Garri"], ["Peak milk tin", "Tomato paste"], ["Ankara fabric"], ["Peak Milk 400g", "Rice"], ["7Up", "Coke"], ["Rice 50kg", "Beans"]]) {
     test(`the list's own change example is accepted by the real price check (${names.join(", ")})`, async () => {
       const lines = names.map((name, i) => ({ item: i + 1, name, price: null, question: null }));
       const example = changeExample(lines);

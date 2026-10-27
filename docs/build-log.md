@@ -18,3 +18,4 @@ Dated record of what was built in this repo. All times are UK time. Everything h
 | Mon 26 Oct | PR 3, QA round 2 fix: a step whose work throws now fails its job straight away, so a handler that lets the error bubble up can never leave the job open. |
 | Mon 26 Oct | PR 4, QA round 2 fixes: a Retry-After longer than 30 s fails the call at once instead of retrying before Meta allows; a response body that stalls or drops after the headers is a MetaApiError and is retried like any timeout. |
 | Mon 26 Oct | CI: the ffmpeg install skips the man-db rebuild, waits for a busy dpkg lock and times out slow mirrors, after a second silent six-minute hang. |
+| Tue 27 Oct | PR 3, Grok review: example and test phone numbers are now obviously fake (`234800000000x`), not realistic Nigerian ones. |

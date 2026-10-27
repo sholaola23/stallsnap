@@ -62,6 +62,18 @@ const NOTES: [string[], string, number[]][] = [
   [["Rice", "5 Alive"], "rice na 1500, five alive na 700", [1500, 700]],
   [["Eggs 30", "Bread"], "eggs 30 na 2500, bread na 1200", [2500, 1200]],
   [["Pure water", "Gala"], "pure water na 50. gala na 200", [50, 200]],
+  // From #6 QA's everyday gate on 830278e.
+  [RB, "rice 15 thousand beans 3 thousand", [15000, 3000]],
+  [["Rice", "Generator"], "rice na 1.5 million, generator na 2 hundred thousand", [1500000, 200000]],
+  [RB, "rice na 2 hundred and 50, beans na 300", [250, 300]],
+  [RB, "rice na 5 hundred beans na 6 hundred", [500, 600]],
+  [["Peak milk", "Milo", "Sugar"], "peak milk na 1 thousand, milo na 2 thousand, sugar na 800 naira", [1000, 2000, 800]],
+  [RB, "rice na twenty thousand, beans na fifteen thousand five hundred", [20000, 15500]],
+  [RB, "rice, 3 thousand. beans, 2 thousand.", [3000, 2000]],
+  [["Rice", "Beans", "Garri"], "1. rice 3000 2. beans 3500 3. garri 1500", [3000, 3500, 1500]],
+  [["Rice", "Garri"], "rice 15k garri 900", [15000, 900]],
+  [["Peak milk", "Milo", "Indomie"], "Peak milk na 650. Milo na 1,000. Indomie na 250.", [650, 1000, 250]],
+  [["Rice", "Garri", "Beans"], "rice na 15 thousand and garri na 900 and beans na 2k", [15000, 900, 2000]],
 ];
 
 describe("everyday voice notes: every item gets exactly the price said", () => {

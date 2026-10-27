@@ -159,7 +159,7 @@ One price is one number: digits or number words, with an optional N/₦ or "nair
 | Two items with the same name | two items both called "Tomato" |
 | The quote isn't the trader's words for this item, with its latest price | a made-up quote; Rice's price used for Beans; "3000" after "no, 3500" |
 
-`test/golden/everyday.test.ts` holds 40 ordinary voice notes and lists with the exact price for every item, and CI runs it, so a parser change can never quietly break an everyday note. A number word matches a digit in a name ("five alive" is 5 Alive), and a list number at the start of a line ("1. Rice: ₦1,500") is not a quantity. A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
+`test/golden/everyday.test.ts` holds 51 ordinary voice notes and lists with the exact price for every item, and CI runs it, so a parser change can never quietly break an everyday note. A number word matches a digit in a name ("five alive" is 5 Alive), and a list number at the start of a line ("1. Rice: ₦1,500") is not a quantity. A size or number in a name is part of the name, never a price: "bread n500 na 700" is 700 for Bread N500, and "rice n500 to n700" is still a range. A later message that names the item with a number replaces the earlier one, and if it is unclear the item is asked.
 
 A refused call goes back to Spark with the reason, so it can fix it or flag the item. Any item still without a price is asked about with a question code writes ("How much is Rice?"). The model's own wording never reaches the trader.
 

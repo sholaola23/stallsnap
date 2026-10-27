@@ -278,6 +278,11 @@ function parsePrice(tokens: string[], i: number, limit = tokens.length): { value
   if (k5) return withNaira(Number(k5[1]) * 1000 + Number(k5[2]) * 100, j + 1);
   if (/^\d+\.\d+k?$/.test(first) || /^\d-\d$/.test(first)) {
     if (tokens[j + 1] === "hundred") return undefined; // "1.5 hundred": unclear
+    if (tokens[j + 1] === "million") {
+      // "1.5 million" is 1,500,000. "1.5k million" or "1-5 million" isn't one number.
+      const m = /^(\d+)\.(\d{1,2})$/.exec(first);
+      return m && j + 1 < limit ? withNaira(Math.round(Number(`${m[1]}.${m[2]}`) * 1_000_000), j + 2) : undefined;
+    }
     const d = digitValue(first, tokens[j + 1]);
     return d && d !== "unreadable" ? withNaira(d.value, j + d.consumed) : undefined;
   }

@@ -539,6 +539,10 @@ describe("neighbouring items: a price or quantity next to a name", () => {
     [RB, "rice, beans na 3000", 1, 3000, "3000"],
     [["Beans", "Eggs 30"], "beans na 1500 or 30", 1, 1500, "beans na 1500"],
     [["Bread 500"], "bread 500 na 500 or 700", 1, 700, "700"],
+    // "three crowns" is not the whole name (Milk is missing), so the words after Rice's price aren't plain.
+    [["Rice", "3 Crowns Milk"], "rice na 2000, three crowns na 900", 1, 2000, "rice na 2000"],
+    // Without the list punctuation, a number before the name is still a quantity.
+    [["Rice"], "1 rice 1500", 1, 1500, "rice 1500"],
   ];
   for (const [names, said, item, naira, quote] of asked) {
     test(`${JSON.stringify(said)}: ${names[item - 1]} at ${naira} is asked`, async () => {
@@ -555,6 +559,21 @@ describe("neighbouring items: a price or quantity next to a name", () => {
     [["3 Crowns Milk", "5 Alive"], "3 crowns milk na 900, 5 alive na 700", 2, 700, "5 alive na 700"],
     [["Rice", "5 Alive"], "rice na 2000, 5 alive na 650", 1, 2000, "rice na 2000"],
     [["Rice", "5 Alive"], "rice na 2000, 5 alive na 650", 2, 650, "5 alive na 650"],
+    [["Rice", "5 Alive"], "rice na 1500, 5 alive na 650", 1, 1500, "rice na 1500"],
+    [["Eggs 30", "3 Crowns Milk"], "eggs 30 na 2500, 3 crowns milk na 900", 1, 2500, "eggs 30 na 2500"],
+    [["Eggs 30", "3 Crowns Milk"], "eggs 30 na 2500, 3 crowns milk na 900", 2, 900, "3 crowns milk na 900"],
+    // Number words match digits in a name: "five alive" is 5 Alive, never a quantity.
+    [["Rice", "5 Alive"], "rice na 1500, five alive na 700", 1, 1500, "rice na 1500"],
+    [["Rice", "5 Alive"], "rice na 1500, five alive na 700", 2, 700, "five alive na 700"],
+    [["5 Alive"], "five alive na 700", 1, 700, "five alive na 700"],
+    [["Rice", "3 Crowns Milk"], "rice na 2000, three crowns milk na 900", 1, 2000, "rice na 2000"],
+    [["Rice", "3 Crowns Milk"], "rice na 2000, three crowns milk na 900", 2, 900, "three crowns milk na 900"],
+    [["Rice", "Three Crowns Milk"], "rice na 2000, 3 crowns milk na 900", 2, 900, "3 crowns milk na 900"],
+    // A list number at the start of a line ("1." or "2)") is not a quantity: StallSnap's own list format.
+    [["Rice", "Garri"], "1. Rice: ₦1,500 per cup\n2. Garri: ₦900 per cup", 1, 1500, "Rice: ₦1,500"],
+    [["Rice", "Garri"], "1. Rice: ₦1,500 per cup\n2. Garri: ₦900 per cup", 2, 900, "Garri: ₦900"],
+    [["Rice", "Garri"], "1) Rice 1500\n2) Garri 900", 2, 900, "Garri 900"],
+    [["Rice"], "1. Rice: ₦1,500 per piece", 1, 1500, "Rice: ₦1,500"],
   ];
   for (const [names, said, item, naira, quote] of priced) {
     test(`${JSON.stringify(said)}: ${names[item - 1]} is ₦${naira}`, async () => {

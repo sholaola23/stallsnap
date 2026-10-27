@@ -40,3 +40,63 @@ test("empty text is still sent as text, not dropped silently", async () => {
   await client.sendText("4477", "");
   expect(bodies).toHaveLength(1);
 });
+
+// Grok review on PR #7: Graph calls time out, and the token only goes to Meta's media hosts.
+import { GraphError, MediaError, isMetaMediaUrl } from "../../src/whatsapp/graph.ts";
+
+const hang = (init?: RequestInit) =>
+  new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("timed out"), { name: "TimeoutError" }))));
+
+test("a Graph API call that never answers fails with GraphError after its retries, not forever", async () => {
+  let calls = 0;
+  const client = new GraphClient({ token: "t", phoneNumberId: "p", timeoutMs: 20, sleep: async () => {}, fetch: (async (_u: unknown, init?: RequestInit) => (calls++, hang(init))) as typeof fetch });
+  const started = Date.now();
+  await expect(client.sendText("4477", "hi")).rejects.toBeInstanceOf(GraphError);
+  expect(calls).toBe(4); // first try plus 3 retries
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+function mediaClient(url: string, onMedia: (init?: RequestInit) => Promise<Response>) {
+  const asked: { url: string; auth: string | null }[] = [];
+  const client = new GraphClient({
+    token: "SECRET",
+    phoneNumberId: "p",
+    timeoutMs: 20,
+    sleep: async () => {},
+    fetch: (async (u: string | URL | Request, init?: RequestInit) => {
+      asked.push({ url: String(u), auth: new Headers(init?.headers).get("authorization") });
+      if (String(u).startsWith("https://graph.facebook.com/")) return new Response(JSON.stringify({ url, mime_type: "image/jpeg", file_size: 10 }));
+      return onMedia(init);
+    }) as typeof fetch,
+  });
+  return { client, asked };
+}
+const accept = { mimeTypes: ["image/jpeg"], maxBytes: 1000 };
+
+test("a media download that never answers fails with MediaError within the timeout", async () => {
+  const { client } = mediaClient("https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1", hang);
+  const err = await client.download("m1", accept).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(MediaError);
+  expect((err as MediaError).reason).toBe("unavailable");
+});
+
+for (const url of [
+  "https://evil.test/x",
+  "https://lookaside.fbsbx.com.evil.test/x",
+  "https://evilfbsbx.com/x",
+  "https://user@lookaside.fbsbx.com/x",
+  "https://lookaside.fbsbx.com:8443/x",
+  "http://lookaside.fbsbx.com/x",
+  "not a url",
+]) {
+  test(`a media URL on ${JSON.stringify(url)} is refused and the token is never sent there`, async () => {
+    const { client, asked } = mediaClient(url, async () => new Response(new Uint8Array(5)));
+    const err = await client.download("m1", accept).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaError);
+    expect(asked.filter((a) => !a.url.startsWith("https://graph.facebook.com/"))).toEqual([]);
+  });
+}
+
+test("Meta's media hosts are accepted", () => {
+  for (const ok of ["https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1", "https://scontent.xx.fbcdn.net/v/t1", "https://mmg.whatsapp.net/d/f/x.enc"]) expect(isMetaMediaUrl(ok)).toBe(true);
+});

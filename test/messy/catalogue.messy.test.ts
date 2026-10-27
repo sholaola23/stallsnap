@@ -96,3 +96,10 @@ test("the real server answers a damaged catalogue with a plain 500, not Bun's de
     rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
+
+// Grok review on PR #9: the page promises no contact route it doesn't give (Shola is still deciding on one).
+test("the page doesn't tell customers to message the trader without a way to do it", () => {
+  const html = renderCatalogue({ title: CATALOGUE_TITLE, updatedAt: "2026-10-27T09:00:00Z", items: [{ name: "Rice", naira: 1500, unit: "bag", image: "item-1.webp", width: 10, height: 10 }] }, "/c/x");
+  expect(html).not.toMatch(/message the trader/i);
+  expect(html).toContain("Prices from 27 October 2026.");
+});

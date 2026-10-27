@@ -125,7 +125,8 @@ export async function cleanUp(client: MetaClient, jobId: string, cutout: Uint8Ar
         reasoning_strength: "low",
         tool_enablement: { enable_image_search: false, enable_web_search: false, enable_shell: false },
       },
-      (r) => (Array.isArray((r as { data?: unknown }).data) && (r as { data: unknown[] }).data.length > 0 ? PRICES.imagePerImage : 0),
+      // Charged in full even when no image comes back: the ledger must never count less than Meta might bill.
+      () => PRICES.imagePerImage,
     )) as { data?: { b64_json?: unknown }[] };
 
     const b64 = res.data?.[0]?.b64_json;

@@ -5,6 +5,9 @@ import type { Line } from "../pipeline/pricing.ts";
 
 const naira = (n: number) => `₦${n.toLocaleString("en-GB")}`;
 
+/** An example change the pricing step accepts: the first item by name, then a price ("rice na 1500"). */
+export const changeExample = (lines: readonly Line[]) => `${(lines[0]?.name ?? "rice").toLowerCase()} na 1500`;
+
 export const copy = {
   welcome:
     "Welcome to StallSnap. I build a price catalogue for your stall that you can share.\n\n1. Send a photo of your stall.\n2. Send a voice note saying your prices.\n\nI only make catalogues, so I can't help with other questions.",
@@ -20,6 +23,8 @@ export const copy = {
   tapToPublish: "To put it online, tap Yes, publish on the list.",
   tooManyChanges: "That is a lot of changes. Please tap Yes, publish on the newest list, or send a new photo to start again.",
   paused: "StallSnap is paused for now. Please try again later.",
+  dailyCap: "StallSnap has reached today's limit, so it is paused until tomorrow. Please send your photo and voice note again then.",
+  jobTooBig: "That photo needed more checking than one catalogue allows, so I stopped there. Please send a photo with fewer items, then your voice note again.",
   failed: "Sorry, something went wrong while I was making your list. Please send your photo and voice note again.",
   publishing: "Putting your catalogue online...",
   publishButton: "Yes, publish",
@@ -41,8 +46,13 @@ export const copy = {
       "Here is your price list:",
       ...lines.map((l) => `${l.item}. ${l.name}: ${l.price ? `${naira(l.price.naira)} per ${l.price.unit}` : "ask for price"}`),
       "",
-      'Tap Yes, publish to put it online. To change something, send a voice note or a text, like "2 na 150".',
+      `Tap Yes, publish to put it online. To change a price, send a voice note or a text, like "${changeExample(lines)}".`,
     ].join("\n");
+  },
+
+  /** For a text after the list that has no price in it, such as "thanks". */
+  changeHint(lines: readonly Line[]): string {
+    return `To change a price, send the item and its new price, like "${changeExample(lines)}". To put your list online, tap Yes, publish.`;
   },
 
   published(url: string): string {

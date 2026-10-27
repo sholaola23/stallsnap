@@ -641,6 +641,28 @@ describe("a price under ₦50 is asked (safety net)", () => {
       expect(await price(names, said, item, naira, quote)).toBeNull();
     });
   }
+  // #13 QA: a number under ₦50 straight before an item may be its quantity, so that item is asked too.
+  const followers: [string[], string, number, number, string][] = [
+    [["Rice", "Eggs"], "rice 30 eggs 2500", 2, 2500, "eggs 2500"],
+    [["Rice", "Beans"], "i get rice 10 beans 3500", 2, 3500, "beans 3500"],
+    [["Rice", "Beans"], "rice na 10, beans na 3500", 2, 3500, "beans na 3500"],
+  ];
+  for (const [names, said, item, naira, quote] of followers) {
+    test(`${JSON.stringify(said)}: ${names[item - 1]} at ₦${naira} is asked`, async () => {
+      expect(await price(names, said, item, naira, quote)).toBeNull();
+    });
+  }
+  const still: [string[], string, number, number, string][] = [
+    [["Rice", "Beans"], "rice 3000 beans 3500", 1, 3000, "rice 3000"],
+    [["Rice", "Beans"], "rice 3000 beans 3500", 2, 3500, "beans 3500"],
+    [["Pure water", "Rice"], "pure water na 50, rice na 1500", 1, 50, "pure water na 50"],
+    [["Pure water", "Rice"], "pure water na 50, rice na 1500", 2, 1500, "rice na 1500"],
+  ];
+  for (const [names, said, item, naira, quote] of still) {
+    test(`${JSON.stringify(said)}: ${names[item - 1]} is still ₦${naira}`, async () => {
+      expect(await price(names, said, item, naira, quote)).toBe(naira);
+    });
+  }
   test("₦50 itself is a price: \"pure water na 50\"", async () => {
     expect(await price(["Pure water"], "pure water na 50", 1, 50, "pure water na 50")).toBe(50);
   });

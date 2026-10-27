@@ -466,7 +466,8 @@ export function segments(text: string, items: readonly QuoteItem[]): { tokens: s
       // 3500") or a different shape ("rice dey 30 eggs 2500") could be a quantity: both are asked.
       const after = breaks.has(p.to);
       const sameShape = seg.price !== undefined && tokens.slice(runs[n - 1]!.end, p.from).join(" ") === tokens.slice(runs[n]!.end, seg.price.from).join(" ");
-      if (!after && (breaks.has(p.from) || !sameShape)) {
+      // A number under the price floor is more likely a quantity for the next item ("rice 30 eggs 2500").
+      if (p.value < MIN_PRICE || (!after && (breaks.has(p.from) || !sameShape))) {
         prev.price = seg.price = undefined;
         prev.unclear = seg.unclear = "a number between two items could be either item's price or a quantity";
       }

@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test src",
     "test:messy": "bun test test/messy",
-    "ci": "bun run typecheck && bun run test && bun run test:messy"
+    "test:golden": "bun test test/golden",
+    "ci": "bun run typecheck && bun run test && bun run test:messy && bun run test:golden"
   },
   "devDependencies": {
     "@types/bun": "1.4.4",

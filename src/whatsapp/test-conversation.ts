@@ -42,7 +42,7 @@ export function sayPrices(items: readonly { item: number; name: string }[], said
   return { lines, events: [], turns: 1, stopped: "all-done" };
 }
 
-export function harness(opts: { dir?: string; products?: string[]; models?: Partial<Models>; media?: Record<string, Uint8Array | Error>; hang?: Partial<Record<"sendButton" | "price" | "publish", boolean>>; now?: () => number } = {}) {
+export function harness(opts: { dir?: string; products?: string[]; models?: Partial<Models>; media?: Record<string, Uint8Array | Error>; hang?: Partial<Record<"sendButton" | "price" | "publish", boolean>>; now?: () => number; callsLeft?: () => number } = {}) {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "conv-"));
   const sent: Sent[] = [];
   const calls = { cutouts: 0, transcribe: 0, price: 0, publish: 0 };
@@ -90,6 +90,7 @@ export function harness(opts: { dir?: string; products?: string[]; models?: Part
     publish: async (s) => (calls.publish++, opts.hang?.publish ? never : `https://stall.test/c/${s.jobId}`),
     // Test messages carry small timestamps (1, 2, 3 seconds), so "now" is just after them.
     now: opts.now ?? (() => 1_000_000),
+    callsLeft: opts.callsLeft,
   });
   const texts = () => sent.filter((s) => s.kind !== "typing").map((s) => s.body ?? "");
   const last = () => sent.filter((s) => s.kind !== "typing").at(-1)!;

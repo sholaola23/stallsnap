@@ -368,3 +368,21 @@ describe("bare numbers in item names", () => {
     expect(await priced(["Rice", "Beans"], "rice na 3000 beans na 1500", 1500, "beans na 1500", 2)).toBe(1500);
   });
 });
+
+// QA B8 on PR #8: a digit before "hundred" multiplies, like "thousand".
+describe("digits with hundred", () => {
+  for (const [said, value] of [["rice na 5 hundred", 500], ["rice na 2 hundred and 50", 250], ["rice na 2 hundred and fifty", 250], ["rice na 1 hundred", 100], ["rice na five hundred", 500]] as const) {
+    test(`${JSON.stringify(said)} reads as ${value} and is priced`, async () => {
+      expect(readSpoken(said).prices.map((p) => p.value)).toEqual([value]);
+      const spark = scriptedSpark([[setPrice(1, value, "bag", said)], "done"]);
+      const r = await priceItems(new MetaClient({ apiKey: "k", guard, fetch: spark.fetch }), "b8", [{ item: 1, name: "Rice" }], [said]);
+      expect(r.lines[0]!.price?.naira).toBe(value);
+    });
+  }
+  test("\"5 hundred\" is never read as 5", async () => {
+    expect(readSpoken("rice na 5 hundred").prices.map((p) => p.value)).not.toContain(5);
+  });
+  test("a range with hundreds is still a range: \"5 to 6 hundred\"", () => {
+    expect(readSpoken("rice na 5 to 6 hundred").prices).toEqual([]);
+  });
+});

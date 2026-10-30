@@ -2,6 +2,9 @@
 // calls (https://dev.meta.ai/docs/tool-calling). Our code checks every call before it changes the
 // list: a price must quote the trader's own words, and a product must come from the photo.
 import { MetaClient, type StreamEvent } from "../meta/client.ts";
+import { numberSpans, tokens } from "./numbers.ts";
+
+export { numbersIn } from "./numbers.ts";
 
 export const SPARK_MODEL = "muse-spark-1.3";
 export const MAX_TURNS = 6;
@@ -19,6 +22,7 @@ export interface PriceLine {
   unit: string | null; // what the price buys: "each", "per tin", "per paint bucket"
   quote: string | null; // the trader's own words the price came from
   question: string | null; // what to ask the trader when there is no price yet
+  removed?: boolean; // the trader said they don't sell it: never published
 }
 
 export interface PricingState {
@@ -31,7 +35,7 @@ export interface PricingState {
 export function startPricing(products: readonly Product[]): PricingState {
   return {
     products: [...products],
-    lines: products.map((p) => ({ productId: p.id, name: p.name, amount: null, unit: null, quote: null, question: null })),
+    lines: products.map((p) => ({ productId: p.id, name: p.name, amount: null, unit: null, quote: null, question: null, removed: false })),
     notMatched: [],
     notes: [],
   };
@@ -82,12 +86,38 @@ const TOOLS = [
   {
     type: "function",
     name: "clear_price",
-    description: "The trader took back a price, or says they no longer sell this product.",
+    description: "The trader took back a price they gave earlier, but still sells the product.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["product_id", "quote"],
-      properties: { product_id: { type: "integer" }, quote: { type: "string" } },
+      properties: { product_id: { type: "integer" }, quote: { type: "string", description: "The trader's exact words." } },
+    },
+  },
+  {
+    type: "function",
+    name: "remove_product",
+    description: "The trader says they don't sell this product, or no longer sell it. It is taken off the price list.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["product_id", "quote"],
+      properties: { product_id: { type: "integer" }, quote: { type: "string", description: "The trader's exact words saying so." } },
+    },
+  },
+  {
+    type: "function",
+    name: "rename_product",
+    description: "The trader says a product has the wrong name, for example 'number 4 na egusi'. Use the trader's own word for it.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["product_id", "new_name", "quote"],
+      properties: {
+        product_id: { type: "integer" },
+        new_name: { type: "string", description: "The new name, using only words the trader said." },
+        quote: { type: "string", description: "The trader's exact words giving the name." },
+      },
     },
   },
 ];
@@ -96,16 +126,9 @@ const INSTRUCTIONS = `You help a Nigerian market trader price the goods in a pho
 The trader recorded a voice note, often in Nigerian Pidgin, saying their prices. The transcript may contain recognition mistakes.
 For every product in the photo list, call exactly one tool: set_price when the note gives its price, otherwise ask_trader.
 If the note prices something that is not in the list, call not_in_photo. Never invent a price, and never set a price the trader did not say.
+"Number 4" means product 4 in the list. If the trader says they don't sell a product, call remove_product. If they give a product a different name, call rename_product.
+The quote must be the trader's exact words for that one product, including the price as they said it, for example "Peak milk na five hundred".
 Later notes can correct earlier prices: the latest note wins. When everything is handled, reply with the single word DONE.`;
-
-function normalise(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[‘’]/g, "'")
-    .replace(/[^\p{L}\p{N}' ]+/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function listText(state: PricingState): string {
   return state.lines
@@ -113,14 +136,42 @@ function listText(state: PricingState): string {
     .join("\n");
 }
 
-// Numbers written in a quote: "1,500", "1500", "2k", "1.5k", "N800". Spoken-word numbers return none.
-export function numbersIn(quote: string): number[] {
-  const found: number[] = [];
-  for (const match of quote.toLowerCase().matchAll(/(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k\b)?/g)) {
-    const value = Number(match[1]!.replace(/,/g, "")) * (match[2] ? 1000 : 1);
-    if (Number.isFinite(value)) found.push(Math.round(value));
+// True when the quote is the trader's own words: whole words, in order, at least two of them.
+function quoteIn(quote: unknown, note: string): quote is string {
+  if (typeof quote !== "string") return false;
+  const q = tokens(quote);
+  const heard = tokens(note);
+  if (q.length < 2) return false;
+  for (let i = 0; i + q.length <= heard.length; i++) {
+    if (q.every((word, j) => heard[i + j] === word)) return true;
   }
-  return found;
+  return false;
+}
+
+// Words that name this product and no other, so "Peak 500, Milo 1500" can be read product by product.
+function ownWords(state: PricingState, productId: number): Set<string> {
+  const words = (id: number) => tokens(state.lines.find((l) => l.productId === id)!.name).filter((w) => w.length >= 3);
+  const others = new Set(state.lines.filter((l) => l.productId !== productId).flatMap((l) => words(l.productId)));
+  return new Set(words(productId).filter((w) => !others.has(w)));
+}
+
+// Checks that the quote says this amount for this product. Returns an error, or null when it does.
+export function priceCheck(state: PricingState, productId: number, amount: number, quote: string): string | null {
+  const words = tokens(quote);
+  // Spans under 5 are "this one", "two tins": counts, not naira.
+  const prices = numberSpans(words).filter((s) => !s.quantity && Math.max(...s.values) >= 5);
+  if (prices.length === 0) return "error: the quote has no price in it; quote the words where the trader says the price, or ask the trader";
+  let span = prices[0]!;
+  if (prices.length > 1) {
+    const own = ownWords(state, productId);
+    const mention = words.findIndex((w) => own.has(w));
+    if (mention === -1) return "error: the quote has more than one price; quote only the words for this product";
+    span = prices.find((s) => s.start > mention) ?? prices.filter((s) => s.start < mention).at(-1)!;
+  }
+  if (!span.values.includes(amount)) {
+    return `error: the quote says ${span.values.join(" or ")}, not ${amount}; quote the words where this price is said`;
+  }
+  return null;
 }
 
 interface ToolCall {
@@ -137,8 +188,7 @@ export function applyTool(state: PricingState, call: { name: string; arguments: 
   } catch {
     return "error: arguments were not valid JSON";
   }
-  const heard = normalise(note);
-  const quoteOk = (q: unknown) => typeof q === "string" && normalise(q).length > 0 && heard.includes(normalise(q));
+  const quoteOk = (q: unknown): q is string => quoteIn(q, note);
   const line = state.lines.find((l) => l.productId === args.product_id);
 
   switch (call.name) {
@@ -150,32 +200,52 @@ export function applyTool(state: PricingState, call: { name: string; arguments: 
       }
       const unit = typeof args.unit === "string" ? args.unit.trim() : "";
       if (!unit) return "error: unit is required, for example 'each'";
-      if (!quoteOk(args.quote)) return "error: quote must be copied exactly from the voice note";
-      const written = numbersIn(String(args.quote));
-      if (written.length > 0 && !written.includes(amount)) {
-        return `error: the quote says ${written.join(" or ")}, not ${amount}; quote the words where this price is said`;
-      }
-      Object.assign(line, { amount, unit, quote: String(args.quote).trim(), question: null });
+      if (!quoteOk(args.quote)) return "error: quote must be two or more whole words copied exactly from the voice note";
+      const wrong = priceCheck(state, line.productId, amount, args.quote);
+      if (wrong) return wrong;
+      // A price for a removed product means the trader sells it after all.
+      Object.assign(line, { amount, unit, quote: args.quote.trim(), question: null, removed: false });
       return `ok: ${line.name} is ₦${amount} ${unit}`;
     }
     case "ask_trader": {
       if (!line) return `error: there is no product ${String(args.product_id)} in the photo list`;
       // A price from an earlier note stands until the trader changes or clears it.
       if (line.amount !== null) return `ok: ${line.name} already has a price, kept`;
+      if (line.removed) return `ok: ${line.name} is off the list, kept off`;
       const question = typeof args.question === "string" ? args.question.trim() : "";
       line.question = question || `How much is the ${line.name}?`;
       return `ok: will ask about ${line.name}`;
     }
     case "not_in_photo": {
-      if (!quoteOk(args.quote)) return "error: quote must be copied exactly from the voice note";
-      state.notMatched.push(String(args.quote).trim());
+      if (!quoteOk(args.quote)) return "error: quote must be two or more whole words copied exactly from the voice note";
+      state.notMatched.push(args.quote.trim());
       return "ok: noted, no price set";
     }
     case "clear_price": {
       if (!line) return `error: there is no product ${String(args.product_id)} in the photo list`;
-      if (!quoteOk(args.quote)) return "error: quote must be copied exactly from the voice note";
-      Object.assign(line, { amount: null, unit: null, quote: null, question: `Do you still sell the ${line.name}? If yes, how much?` });
+      if (!quoteOk(args.quote)) return "error: quote must be two or more whole words copied exactly from the voice note";
+      Object.assign(line, { amount: null, unit: null, quote: null, question: `How much is the ${line.name} now?` });
       return `ok: cleared ${line.name}`;
+    }
+    case "remove_product": {
+      if (!line) return `error: there is no product ${String(args.product_id)} in the photo list`;
+      if (!quoteOk(args.quote)) return "error: quote must be two or more whole words copied exactly from the voice note";
+      Object.assign(line, { amount: null, unit: null, quote: args.quote.trim(), question: null, removed: true });
+      return `ok: ${line.name} is off the price list`;
+    }
+    case "rename_product": {
+      if (!line) return `error: there is no product ${String(args.product_id)} in the photo list`;
+      if (!quoteOk(args.quote)) return "error: quote must be two or more whole words copied exactly from the voice note";
+      const name = typeof args.new_name === "string" ? args.new_name.trim().replace(/\s+/g, " ") : "";
+      const said = new Set(tokens(args.quote));
+      if (!name || name.length > 60) return "error: new_name must be 1 to 60 characters";
+      if (!tokens(name).every((w) => said.has(w))) return "error: new_name must use only words from the quote";
+      const old = line.name;
+      line.name = name;
+      const product = state.products.find((p) => p.id === line.productId);
+      if (product) product.name = name;
+      if (line.question) line.question = line.question.replace(old, name);
+      return `ok: ${old} is now called ${name}`;
     }
     default:
       return `error: unknown tool ${call.name}`;
@@ -216,7 +286,7 @@ export async function priceNote(client: MetaClient, state: PricingState, transcr
   }
   // Anything the model left alone still needs the trader's answer.
   for (const line of next.lines) {
-    if (line.amount === null && !line.question) line.question = `How much is the ${line.name}?`;
+    if (line.amount === null && !line.removed && !line.question) line.question = `How much is the ${line.name}?`;
   }
   return next;
 }
@@ -225,11 +295,13 @@ export async function priceNote(client: MetaClient, state: PricingState, transcr
 export function replyText(state: PricingState): string {
   const naira = (n: number) => `₦${n.toLocaleString("en-GB")}`;
   const priced = state.lines.filter((l) => l.amount !== null);
-  const asks = state.lines.filter((l) => l.amount === null);
+  const asks = state.lines.filter((l) => l.amount === null && !l.removed);
+  const removed = state.lines.filter((l) => l.removed);
   const parts: string[] = [];
   if (priced.length) {
-    parts.push("Here is your price list:\n" + priced.map((l, i) => `${i + 1}. ${l.name}: ${naira(l.amount!)} ${l.unit}`).join("\n"));
+    parts.push("Here is your price list:\n" + priced.map((l) => `${l.productId}. ${l.name}: ${naira(l.amount!)} ${l.unit}`).join("\n"));
   }
+  if (removed.length) parts.push("Taken off your list:\n" + removed.map((l) => `- ${l.name}`).join("\n"));
   if (asks.length) parts.push("I still need:\n" + asks.map((l) => `- ${l.question}`).join("\n"));
   if (state.notMatched.length) {
     parts.push(

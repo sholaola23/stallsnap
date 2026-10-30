@@ -19,6 +19,24 @@ export function tokens(text: string): string[] {
     .match(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|[\p{L}']+/gu) ?? [];
 }
 
+// The same words, each with the clause it is in. Clauses end at punctuation followed by a space
+// or the end ("Peak 500, Milo 1500" is two clauses; "1,500" and "1.5k" are not split).
+export function clauseTokens(text: string): { words: string[]; clause: number[] } {
+  const words: string[] = [];
+  const clause: number[] = [];
+  text.split(/[,.;:!?]+(?=\s|$)|\n/).forEach((part, i) => {
+    for (const word of tokens(part)) {
+      words.push(word);
+      clause.push(i);
+    }
+  });
+  return { words, clause };
+}
+
+export function isNumberWord(word: string | undefined): boolean {
+  return word !== undefined && kindOf(word) !== null;
+}
+
 export interface NumberSpan {
   start: number; // token index
   end: number; // exclusive

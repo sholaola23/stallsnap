@@ -28,6 +28,11 @@ Dated record of what was built and when, for the hackathon rule that only work f
 - QA round 1 fixes to stage 2: the price guard now reads spoken numbers ("five hundred", "two thousand five"), matches the quote on whole words (two or more), and reads a quote covering two products product by product. A quote with no price in it, or two prices and no product word, is refused and the trader is asked instead. New tools `remove_product` ("I no dey sell am") and `rename_product` ("number 4 na egusi", using only the trader's words). The price list numbers products as the photo list does.
 - QA round 2 fixes: the guard checks the whole number in the note, so a quote that stops at "two thousand" of "two thousand five hundred" is refused. QA round 3: a quote must name the product and hold exactly one price, and in the note that price must belong to this product ("500 for Peak", else the product named before it, else after it). The model quotes "Milo na 1500" on its own instead of the whole sentence.
 
+- Stage 3, web catalogue (`src/catalogue/`, `src/server.ts`):
+  - Publishing writes the price list and one card per product under a random 12-character link; only products with a real cut-out are published, and unpriced ones say "Ask for price".
+  - The page is plain HTML and CSS with no scripts, light and dark, sized for cheap phones. 0 axe violations and no sideways scroll at 320 to 1280px (synthetic test data).
+  - The Bun server serves `/c/<link>` and its pictures, with a strict content security policy.
+
 ### Decisions
 
 | Decision | Why |
@@ -42,3 +47,4 @@ Dated record of what was built and when, for the hackathon rule that only work f
 | Things priced but not in the photo are listed back, never added | StallSnap only shows products the trader actually photographed. |
 | Voice biased to English plus the photo's product names | Pidgin isn't one of the 25 supported languages; it is English-based, and the names help with brand words. |
 | The model's tool loop stops after 6 turns | Bounds the cost of one voice note even if the model keeps calling tools. |
+| Catalogue page has no JavaScript | Loads fast on mobile data and leaves nothing to break or exploit. |

@@ -107,4 +107,41 @@ export class MetaClient {
     writeFileSync(path, JSON.stringify(events));
     return events;
   }
+
+  // Transcribes a WAV recording with Muse Voice Transcribe (https://dev.meta.ai/docs/speech-to-text).
+  // Cached by the audio and settings, like every other call.
+  async transcribe(wav: Buffer, settings: Record<string, unknown>): Promise<TranscribeResult> {
+    const request: Record<string, unknown> = { ...settings, audioEncoding: "WAV" };
+    const model = String(request.model);
+    const hash = createHash("sha256").update(JSON.stringify(request)).update(wav).digest("hex").slice(0, 24);
+    const path = join(this.cacheDir, `${model}-${hash}.json`);
+    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as TranscribeResult;
+
+    if (this.options.budget.settings.live && !this.options.apiKey) {
+      throw new MetaApiError("MODEL_API_KEY is not set, so the live call cannot be made.");
+    }
+    this.options.budget.allow(model);
+    const form = new FormData();
+    form.append("request", new Blob([JSON.stringify(request)], { type: "application/json" }));
+    form.append("audio", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "note.wav");
+    const response = await this.fetchImpl(`${BASE_URL}/asr/transcribe`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.options.apiKey}`, Accept: "application/json" },
+      body: form,
+    });
+    const text = await response.text();
+    if (!response.ok) throw new MetaApiError(`Meta API ${response.status} for ${model}: ${text.slice(0, 300)}`, response.status);
+    const result = JSON.parse(text) as TranscribeResult;
+    // Billed per whole second of audio processed.
+    this.options.budget.record(model, costUsd(model, undefined, Math.floor((result.audioDurationMs ?? 0) / 1000)));
+    mkdirSync(this.cacheDir, { recursive: true });
+    writeFileSync(path, JSON.stringify(result));
+    return result;
+  }
+}
+
+export interface TranscribeResult {
+  transcript: string;
+  audioDurationMs?: number;
+  turns?: { transcript: string; startMs: number; endMs: number }[];
 }

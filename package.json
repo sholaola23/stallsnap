@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit && bun test",
     "cutouts": "bun src/image/cli.ts",
+    "price": "bun src/pricing/cli.ts",
     "spend": "bun src/meta/spend.ts"
   },
   "dependencies": {

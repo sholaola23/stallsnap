@@ -19,6 +19,7 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - Tests use a synthetic photo and a fake API; CI never makes a paid call.
 
 - First live run (Shola's Mac, three third-party test photos, $0.096): 63 products found and cut out, none skipped. The sandal wall hit the 32-product limit and missed the right-hand wall, so the limit went up to 64.
+- Sandal wall re-run with the 64 limit ($0.005): Muse Spark listed 60 products, under the limit, and SAM cut out all 60. The right-hand wall is now covered; the gap in the middle is the shop doorway. Some sandals on the bottom right rows still have no mask, and four masks cover under 40% of their box.
 - Stage 2, voice note to prices (`src/voice/`, `src/pricing/`):
   - ffmpeg turns the WhatsApp voice note (Ogg Opus) into 24 kHz mono WAV, and Muse Voice Transcribe reads it, biased to English and to the product names from the photo.
   - Muse Spark prices the products with four tools: `set_price`, `ask_trader`, `not_in_photo` and `clear_price`. Our code checks every call before it changes the list.

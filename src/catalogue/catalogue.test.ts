@@ -88,20 +88,20 @@ describe("the page", () => {
 });
 
 describe("the server", () => {
-  const get = (serve: (r: Request) => Response, path: string, method = "GET") => serve(new Request(`http://localhost${path}`, { method }));
+  const get = (serve: (r: Request) => Promise<Response>, path: string, method = "GET") => serve(new Request(`http://localhost${path}`, { method }));
 
   test("serves the page and its pictures with safe headers", async () => {
     const { serve, catalogue } = setup();
-    const page = get(serve, `/c/${catalogue.slug}`);
+    const page = await get(serve, `/c/${catalogue.slug}`);
     expect(page.status).toBe(200);
     expect(page.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
     expect(await page.text()).toContain("Peak milk tin");
-    const img = get(serve, `/c/${catalogue.slug}/01.jpg`);
+    const img = await get(serve, `/c/${catalogue.slug}/01.jpg`);
     expect(img.headers.get("Content-Type")).toBe("image/jpeg");
     expect(new Uint8Array(await img.arrayBuffer())).toEqual(new Uint8Array(card));
   });
 
-  test("unknown, malformed and path-escaping requests get 404", () => {
+  test("unknown, malformed and path-escaping requests get 404", async () => {
     const { serve, catalogue } = setup();
     for (const path of [
       "/c/abcdefghjkmn",
@@ -112,12 +112,12 @@ describe("the server", () => {
       `/c/${catalogue.slug.toUpperCase()}`,
       "/",
     ]) {
-      expect(get(serve, path).status).toBe(404);
+      expect((await get(serve, path)).status).toBe(404);
     }
   });
 
-  test("only GET and HEAD are allowed", () => {
+  test("only GET and HEAD are allowed", async () => {
     const { serve, catalogue } = setup();
-    expect(get(serve, `/c/${catalogue.slug}`, "POST").status).toBe(405);
+    expect((await get(serve, `/c/${catalogue.slug}`, "POST")).status).toBe(405);
   });
 });

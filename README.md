@@ -15,7 +15,7 @@ Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design note
 | Hear the prices | Muse Voice Transcribe | Turns the voice note into text, biased to the product names from the photo |
 | Match the prices | Muse Spark (tool calls) | Sets each price with the trader's own words as proof, and asks about anything unpriced |
 | Catalogue page | | A public web page per trader, one card per product with its price, shared as a link |
-| WhatsApp loop | | Coming next |
+| WhatsApp loop | WhatsApp Cloud API | The trader sends a photo and a voice note, replies YES, and gets the link back |
 
 Every picture in a catalogue comes from the trader's photo. StallSnap never generates a product the trader doesn't stock.
 
@@ -44,6 +44,8 @@ STALLSNAP_LIVE=1 bun run price out/stall/summary.json note.ogg
 The cut-out command writes `out/<photo name>/`: one transparent PNG and one white catalogue card per product, `overlay.jpg` with the masks drawn on the photo, and `summary.json` with what was found, what was skipped and what the run cost.
 
 Run the server with `bun src/server.ts` (port 3000, or `PORT`). Catalogues live under `data/catalogues/`, or `$STALLSNAP_DATA_DIR/catalogues`.
+
+With the WhatsApp settings from `.env.example` set, the same server answers the webhook at `/webhook`. See [docs/whatsapp-setup.md](docs/whatsapp-setup.md). The `Dockerfile` builds it for Railway; mount a volume at `/data`.
 
 ## Spend limits
 

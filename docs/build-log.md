@@ -30,6 +30,13 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - The page is plain HTML and CSS with no scripts, light and dark, sized for cheap phones. 0 axe violations and no sideways scroll at 320 to 1280px (synthetic test data).
   - The Bun server serves `/c/<link>` and its pictures, with a strict content security policy.
 
+- Stage 4, WhatsApp loop (`src/whatsapp/`, `src/main.ts`, `Dockerfile`):
+  - Webhook on the Meta WhatsApp Cloud API: checks Meta's signature on every call, answers Meta at once and does the work behind it.
+  - Conversation: photo, then voice note (or typed prices), then YES, then a catalogue link. Later notes change prices and republish to the same link.
+  - Only numbers on `ALLOWED_NUMBERS` are answered, before any paid call. A retried webhook is handled once, even across a restart. Each trader's messages run in order.
+  - Spend cap, bad photos and bad voice notes each get a plain message to the trader.
+  - Dockerfile with ffmpeg for Railway; data lives on a volume.
+
 ### Decisions
 
 | Decision | Why |
@@ -43,3 +50,5 @@ Dated record of what was built and when, for the hackathon rule that only work f
 | Voice biased to English plus the photo's product names | Pidgin isn't one of the 25 supported languages; it is English-based, and the names help with brand words. |
 | The model's tool loop stops after 6 turns | Bounds the cost of one voice note even if the model keeps calling tools. |
 | Catalogue page has no JavaScript | Loads fast on mobile data and leaves nothing to break or exploit. |
+| Phone numbers are hashed before they name a session folder | Keeps numbers out of file names and logs. |
+| The webhook answers 200 before the models run | Meta retries slow webhooks; the reply goes out as its own message when the work is done. |

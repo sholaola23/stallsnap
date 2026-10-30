@@ -19,7 +19,7 @@ Still to do:
 
 ## Settings
 
-Set these as Railway Variables when deploying. `.env.example` lists the same names with no values.
+Set these as Railway Variables when deploying, plus `PUBLIC_URL` (the server address) and, optionally, `CATALOGUE_STALL_NAME`. `.env.example` lists the same names with no values.
 
 | Variable | What it holds | Where it comes from |
 |---|---|---|

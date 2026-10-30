@@ -4,7 +4,8 @@ import { MetaClient, outputText } from "../meta/client.ts";
 import { dataUrl, type StallPhoto } from "./photo.ts";
 
 export const SPARK_MODEL = "muse-spark-1.3";
-export const MAX_PRODUCTS = 32;
+// A busy stall (a wall of sandals) can hold 60+ designs; 64 is four SAM requests.
+export const MAX_PRODUCTS = 64;
 
 export interface PixelBox {
   left: number;

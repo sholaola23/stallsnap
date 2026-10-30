@@ -137,6 +137,13 @@ describe("messy Spark product lists", () => {
     expect(products).toEqual([{ id: 1, name: "Peak milk", box: { left: 400, top: 0, right: 800, bottom: 300 } }]);
   });
 
+  test("a big stall keeps up to 64 products", () => {
+    const many = Array.from({ length: 70 }, (_, i) => ({ name: `sandal ${i}`, x_min: 0, y_min: 0, x_max: 100, y_max: 100 }));
+    const products = toProducts({ products: many }, 800, 600);
+    expect(products).toHaveLength(64);
+    expect(products.at(-1)!.id).toBe(64);
+  });
+
   test("anything that isn't a product list gives no products", () => {
     for (const raw of [null, 42, "products", { products: "many" }, {}]) expect(toProducts(raw, 800, 600)).toEqual([]);
   });

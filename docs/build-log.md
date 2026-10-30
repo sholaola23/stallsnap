@@ -18,6 +18,8 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - `bun run cutouts <photo>` writes the cut-outs, cards, a mask overlay and a summary with the spend.
   - Tests use a synthetic photo and a fake API; CI never makes a paid call.
 
+- First live run (Shola's Mac, three third-party test photos, $0.096): 63 products found and cut out, none skipped. The sandal wall hit the 32-product limit and missed the right-hand wall, so the limit went up to 64.
+
 ### Decisions
 
 | Decision | Why |

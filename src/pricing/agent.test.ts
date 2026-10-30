@@ -155,7 +155,7 @@ describe("numbers in a quote", () => {
 describe("the reply", () => {
   test("with everything priced it asks for YES", () => {
     const state = startPricing([{ id: 1, name: "Peak milk tin" }]);
-    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "na 1,500" }) }, note);
+    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "Peak milk na 1,500" }) }, note);
     expect(replyText(state)).toBe("Here is your price list:\n1. Peak milk tin: ₦1,500 each\n\nReply YES to publish, or send a voice note to change a price.");
   });
 });
@@ -189,13 +189,16 @@ describe("a price nobody said is refused", () => {
     expect(state.lines[1]!.amount).toBeNull();
   });
 
-  test("A3 a quote covering two products gives each its own number", () => {
+  test("A3 a quote covering two products is refused; each product quotes its own words", () => {
     const state = startPricing(two);
     const said = "Peak 500, Milo 1500";
-    expect(applyTool(state, set(1, 1500, said), said)).toStartWith("error");
-    expect(applyTool(state, set(2, 500, said), said)).toStartWith("error");
-    expect(applyTool(state, set(1, 500, said), said)).toStartWith("ok");
-    expect(applyTool(state, set(2, 1500, said), said)).toStartWith("ok");
+    for (const [id, amount] of [[1, 1500], [1, 500], [2, 500], [2, 1500]] as const) {
+      expect(applyTool(state, set(id, amount, said), said)).toStartWith("error: the quote has more than one price");
+    }
+    expect(applyTool(state, set(1, 1500, "Peak 500"), said)).toStartWith("error");
+    expect(applyTool(state, set(2, 500, "Peak 500"), said)).toStartWith("error: the quote must name this product");
+    expect(applyTool(state, set(1, 500, "Peak 500"), said)).toStartWith("ok");
+    expect(applyTool(state, set(2, 1500, "Milo 1500"), said)).toStartWith("ok");
     expect(state.lines.map((l) => l.amount)).toEqual([500, 1500]);
   });
 
@@ -204,25 +207,36 @@ describe("a price nobody said is refused", () => {
     const said = "Peak milk na two thousand five hundred";
     expect(applyTool(state, set(1, 2000, "Peak milk na two thousand"), said)).toStartWith("error: the quote cuts a number short");
     expect(applyTool(state, set(1, 2, "Peak milk na 2"), "Peak milk na 2 k each")).toStartWith("error");
-    expect(state.lines[0]!.amount).toBeNull();
+    expect(applyTool(state, set(2, 1, "Milo na 1.5"), "Milo na 1.5 k")).toStartWith("error");
+    expect(state.lines.map((l) => l.amount)).toEqual([null, null]);
     expect(applyTool(state, set(1, 2500, said), said)).toStartWith("ok");
   });
 
-  test("B3 a price said before the product goes to that product", () => {
-    for (const said of ["na 500 for Peak, 1500 for Milo", "na 500 for Peak 1500 for Milo"]) {
+  test("B3 and C1: with prices before or after the product, only that product's own words count", () => {
+    for (const said of ["na 500 for Peak, 1500 for Milo", "na 500 for Peak 1500 for Milo", "Peak na 500 Milo na 1500"]) {
       const state = startPricing(two);
       expect(applyTool(state, set(1, 1500, said), said)).toStartWith("error");
       expect(applyTool(state, set(2, 500, said), said)).toStartWith("error");
-      expect(applyTool(state, set(1, 500, said), said)).toStartWith("ok");
-      expect(applyTool(state, set(2, 1500, said), said)).toStartWith("ok");
+      expect(applyTool(state, set(1, 500, said), said)).toStartWith("error");
+      expect(state.lines.map((l) => l.amount)).toEqual([null, null]);
     }
+    const state = startPricing(two);
+    expect(applyTool(state, set(1, 500, "500 for Peak"), "na 500 for Peak 1500 for Milo")).toStartWith("ok");
+    expect(applyTool(state, set(2, 1500, "Milo na 1500"), "Peak na 500 Milo na 1500")).toStartWith("ok");
+    expect(applyTool(state, set(2, 500, "500 Milo"), "Peak na 500 Milo na 1500")).toStartWith("error");
   });
 
-  test("two prices equally near the product word are refused", () => {
+  test("a deal is read as its price, not its count", () => {
     const state = startPricing(two);
-    const said = "500 Peak 1500";
-    expect(applyTool(state, set(1, 500, said), said)).toStartWith("error");
-    expect(applyTool(state, set(1, 1500, said), said)).toStartWith("error");
+    const said = "Peak na two for 1000";
+    expect(applyTool(state, set(1, 2, said), said)).toStartWith("error");
+    expect(applyTool(state, set(1, 1000, said), said)).toStartWith("ok");
+  });
+
+  test("'number 12' names the product and is not a price", () => {
+    const state = startPricing([{ id: 1, name: "Tomato" }, { id: 12, name: "Pepper" }]);
+    expect(applyTool(state, set(12, 500, "number 12 na 500"), "number 12 na 500")).toStartWith("ok");
+    expect(applyTool(state, set(1, 500, "number 12 na 500"), "number 12 na 500")).toStartWith("error: the quote must name this product");
   });
 
   test("two numbers and no product word is refused rather than guessed", () => {

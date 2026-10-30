@@ -16,7 +16,7 @@ function pricedState() {
     { id: 2, name: "Indomie <b>carton</b>" },
     { id: 3, name: "Spaghetti" },
   ]);
-  applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "1,500" }) }, note);
+  applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "na 1,500" }) }, note);
   return state;
 }
 
@@ -39,6 +39,15 @@ describe("publishing", () => {
     ]);
   });
 
+  test("a product the trader doesn't sell is never published (QA A4)", () => {
+    const { store } = setup();
+    const state = pricedState();
+    const said = "I no dey sell Indomie again";
+    applyTool(state, { name: "remove_product", arguments: JSON.stringify({ product_id: 2, quote: said }) }, said);
+    const catalogue = store.publish(state, new Map([[1, card], [2, card]]), "Stall");
+    expect(catalogue.items.map((i) => i.name)).toEqual(["Peak milk tin"]);
+  });
+
   test("slugs are 12 characters from an unambiguous alphabet", () => {
     for (let i = 0; i < 50; i++) expect(newSlug()).toMatch(/^[a-km-np-z2-9]{12}$/);
   });
@@ -46,7 +55,7 @@ describe("publishing", () => {
   test("republishing to the same slug replaces the list", () => {
     const { store, catalogue } = setup();
     const state = pricedState();
-    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "per tin", quote: "1,500" }) }, note);
+    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "per tin", quote: "na 1,500" }) }, note);
     store.publish(state, new Map([[1, card]]), "Mama Ngozi's Provisions", catalogue.slug);
     expect(store.get(catalogue.slug)!.items).toEqual([{ name: "Peak milk tin", amount: 1500, unit: "per tin", image: "01.jpg" }]);
   });

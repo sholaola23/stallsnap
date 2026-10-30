@@ -37,8 +37,8 @@ export class CatalogueStore {
     const items: CatalogueItem[] = [];
     for (const line of state.lines) {
       const card = cards.get(line.productId);
-      // A product without a real cut-out never reaches the page.
-      if (!card) continue;
+      // A product without a real cut-out, or one the trader doesn't sell, never reaches the page.
+      if (!card || line.removed) continue;
       const image = `${String(line.productId).padStart(2, "0")}.jpg`;
       writeFileSync(join(dir, image), card);
       items.push({ name: line.name, amount: line.amount, unit: line.amount === null ? null : line.unit, image });

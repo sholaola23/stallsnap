@@ -4,11 +4,49 @@ StallSnap builds a priced catalogue for a market trader from a stall photo and a
 
 ## Before the event
 
-Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design notes, an idea spike, a day-one test and early prototype code for StallSnap in a separate repo. None of that is in this repo. Everything here was written after kickoff, and the dated build log shows when.
+Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design notes, an idea spike, a day-one test and early prototype code for StallSnap in a separate repo. None of that is in this repo. Everything here was written after kickoff, and the dated [build log](docs/build-log.md) shows when.
 
-## Status
+## How it works
 
-Work in progress for the Meta Global AI Developer Hackathon 2026 (Indie track). Submissions are due Wed 4 Nov 2026, 9pm ET.
+| Step | Model | What it does |
+|---|---|---|
+| Find the products | Muse Spark 1.3 | Lists each product line on the stall with a box around one clear example |
+| Cut them out | SAM 3.1 | Turns each box into a pixel mask; each product is cut from the trader's own photo |
+| Read the prices | Muse Voice Transcribe, Muse Spark | Coming next |
+| Catalogue page | | Coming next |
+| WhatsApp loop | | Coming next |
+
+Every picture in a catalogue comes from the trader's photo. StallSnap never generates a product the trader doesn't stock.
+
+## Setup
+
+You need [Bun](https://bun.sh) 1.4.4.
+
+```bash
+bun install
+bun run check        # typecheck and tests; makes no paid calls
+```
+
+To run on a real photo, copy `.env.example` to `.env` and add your Meta Model API key. Never commit `.env`.
+
+```bash
+set -a; . ./.env; set +a
+STALLSNAP_LIVE=1 bun run cutouts path/to/stall.jpg
+```
+
+This writes `out/<photo name>/`: one transparent PNG and one white catalogue card per product, `overlay.jpg` with the masks drawn on the photo, and `summary.json` with what was found, what was skipped and what the run cost.
+
+## Spend limits
+
+Every Meta API call is paid, so the client guards each one:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `STALLSNAP_LIVE` | `0` | Paid calls only happen when this is `1` |
+| `STALLSNAP_MAX_CALLS` | `10` | Most paid calls one command may make |
+| `STALLSNAP_DAILY_CAP_USD` | `2` | Refuses a call that would take today's estimated spend (UTC day, this machine) past this |
+
+Answers are cached in `.cache/meta/` by request, so running the same photo again costs nothing. `bun run spend` shows today's estimated spend.
 
 ## Licence
 

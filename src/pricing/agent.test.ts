@@ -137,7 +137,7 @@ describe("tool calls the code refuses", () => {
     const state = startPricing(products);
     applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 2, amount_naira: 900, unit: "per pack", quote: "Spaghetti 900" }) }, note);
     applyTool(state, { name: "clear_price", arguments: JSON.stringify({ product_id: 2, quote: "spaghetti 900 PER pack!" }) }, note);
-    expect(state.lines[1]).toMatchObject({ amount: null, unit: null, question: "Do you still sell the Golden Penny spaghetti? If yes, how much?" });
+    expect(state.lines[1]).toMatchObject({ amount: null, unit: null, removed: false, question: "How much is the Golden Penny spaghetti now?" });
   });
 });
 
@@ -146,8 +146,8 @@ describe("numbers in a quote", () => {
     expect(numbersIn("Peak milk na 1,500")).toEqual([1500]);
     expect(numbersIn("na 2k each")).toEqual([2000]);
     expect(numbersIn("1.5k")).toEqual([1500]);
-    expect(numbersIn("N800 for two")).toEqual([800]);
-    expect(numbersIn("two thousand naira")).toEqual([]);
+    expect(numbersIn("N800 for two")).toEqual([800, 2]);
+    expect(numbersIn("two thousand naira")).toEqual([2000]);
     expect(numbersIn("3 for 1000")).toEqual([3, 1000]);
   });
 });
@@ -155,7 +155,125 @@ describe("numbers in a quote", () => {
 describe("the reply", () => {
   test("with everything priced it asks for YES", () => {
     const state = startPricing([{ id: 1, name: "Peak milk tin" }]);
-    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "1,500" }) }, note);
+    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "na 1,500" }) }, note);
     expect(replyText(state)).toBe("Here is your price list:\n1. Peak milk tin: ₦1,500 each\n\nReply YES to publish, or send a voice note to change a price.");
+  });
+});
+
+// QA round 1 (30 Oct): ways round the price guard. Each must stay refused.
+describe("a price nobody said is refused", () => {
+  const two = [
+    { id: 1, name: "Peak milk tin" },
+    { id: 2, name: "Milo tin" },
+  ];
+  const set = (id: number, amount: number, quote: string) => ({
+    name: "set_price",
+    arguments: JSON.stringify({ product_id: id, amount_naira: amount, unit: "each", quote }),
+  });
+
+  test("A1 spoken numbers are checked: five hundred is not 5000", () => {
+    const state = startPricing(two);
+    const said = "Peak milk na five hundred naira";
+    expect(applyTool(state, set(1, 5000, said), said)).toStartWith("error");
+    expect(state.lines[0]!.amount).toBeNull();
+    expect(applyTool(state, set(1, 500, said), said)).toStartWith("ok");
+    expect(state.lines[0]!.amount).toBe(500);
+  });
+
+  test("A2 a quote must be whole words, at least two, with a price in it", () => {
+    const state = startPricing(two);
+    const said = "Peak milk 500, Milo no dey";
+    expect(applyTool(state, set(2, 9000, "k"), said)).toStartWith("error");
+    expect(applyTool(state, set(2, 9000, "lk 5"), said)).toStartWith("error");
+    expect(applyTool(state, set(2, 9000, "Milo no dey"), said)).toStartWith("error");
+    expect(state.lines[1]!.amount).toBeNull();
+  });
+
+  test("A3 a quote covering two products gives each its own number", () => {
+    const state = startPricing(two);
+    const said = "Peak 500, Milo 1500";
+    expect(applyTool(state, set(1, 1500, said), said)).toStartWith("error");
+    expect(applyTool(state, set(2, 500, said), said)).toStartWith("error");
+    expect(applyTool(state, set(1, 500, said), said)).toStartWith("ok");
+    expect(applyTool(state, set(2, 1500, said), said)).toStartWith("ok");
+    expect(state.lines.map((l) => l.amount)).toEqual([500, 1500]);
+  });
+
+  test("two numbers and no product word is refused rather than guessed", () => {
+    const state = startPricing(two);
+    const said = "this one 500 that one 1500";
+    expect(applyTool(state, set(1, 500, said), said)).toStartWith("error");
+  });
+
+  test("the ways traders say prices are read", () => {
+    const cases: [string, number][] = [
+      ["Peak milk na two thousand five hundred", 2500],
+      ["Peak milk na two thousand five", 2500],
+      ["Peak milk na one k", 1000],
+      ["Peak milk na 2 thousand 500", 2500],
+      ["Peak milk na twenty five thousand naira", 25000],
+      ["Peak milk na one thousand and five hundred", 1500],
+      ["Peak milk two for 1000", 1000],
+      ["Peak milk this one na 800", 800],
+      ["Peak milk N1,500", 1500],
+    ];
+    for (const [said, amount] of cases) {
+      const state = startPricing(two);
+      expect(`${said}: ${applyTool(state, set(1, amount, said), said)}`).toBe(`${said}: ok: Peak milk tin is ₦${amount} each`);
+    }
+  });
+});
+
+describe("the trader changes the list", () => {
+  const two = [
+    { id: 1, name: "Tomato" },
+    { id: 2, name: "Blue soap bar" },
+  ];
+  const call = (name: string, args: Record<string, unknown>) => ({ name, arguments: JSON.stringify(args) });
+
+  test("A4 'I no dey sell am' takes the product off the list, with no question", () => {
+    const state = startPricing(two);
+    const said = "Tomato 500. I no dey sell soap again";
+    expect(applyTool(state, call("remove_product", { product_id: 2, quote: "I no dey sell soap again" }), said)).toStartWith("ok");
+    expect(state.lines[1]).toMatchObject({ removed: true, amount: null, question: null });
+    expect(applyTool(state, call("ask_trader", { product_id: 2, question: "How much?" }), said)).toContain("kept off");
+    const reply = replyText(state);
+    expect(reply).toContain("Taken off your list:\n- Blue soap bar");
+    expect(reply).not.toContain("How much is the Blue soap bar");
+  });
+
+  test("removing needs the trader's words", () => {
+    const state = startPricing(two);
+    expect(applyTool(state, call("remove_product", { product_id: 2, quote: "no longer sold" }), "Tomato 500")).toStartWith("error");
+    expect(state.lines[1]!.removed).toBe(false);
+  });
+
+  test("a price later puts a removed product back", () => {
+    const state = startPricing(two);
+    applyTool(state, call("remove_product", { product_id: 2, quote: "no dey sell soap" }), "I no dey sell soap");
+    applyTool(state, call("set_price", { product_id: 2, amount_naira: 300, unit: "each", quote: "soap na 300" }), "soap na 300");
+    expect(state.lines[1]).toMatchObject({ removed: false, amount: 300 });
+  });
+
+  test("a wrong name is corrected with the trader's own word", () => {
+    const state = startPricing([{ id: 4, name: "black seeds" }]);
+    const said = "number 4 na egusi, 2k per cup";
+    expect(applyTool(state, call("rename_product", { product_id: 4, new_name: "Egusi", quote: "number 4 na egusi" }), said)).toStartWith("ok");
+    expect(state.lines[0]!.name).toBe("Egusi");
+    expect(state.products[0]!.name).toBe("Egusi");
+  });
+
+  test("a new name the trader never said is refused", () => {
+    const state = startPricing([{ id: 4, name: "black seeds" }]);
+    const said = "number 4 na egusi";
+    expect(applyTool(state, call("rename_product", { product_id: 4, new_name: "Premium egusi", quote: said }), said)).toStartWith("error");
+    expect(applyTool(state, call("rename_product", { product_id: 4, new_name: "Ogbono", quote: "na ogbono" }), said)).toStartWith("error");
+    expect(state.lines[0]!.name).toBe("black seeds");
+  });
+
+  test("the price list uses the photo's numbers, so 'number 4' means the same thing everywhere", () => {
+    const state = startPricing([{ id: 3, name: "Tomato" }, { id: 4, name: "Egusi" }]);
+    applyTool(state, call("set_price", { product_id: 4, amount_naira: 2000, unit: "per cup", quote: "egusi 2k" }), "egusi 2k");
+    expect(replyText(state)).toContain("4. Egusi: ₦2,000 per cup");
   });
 });

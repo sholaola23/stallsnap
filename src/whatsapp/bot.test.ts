@@ -102,7 +102,7 @@ describe("the WhatsApp conversation", () => {
 
   test("a change after publishing republishes to the same link", async () => {
     const { bot, sender } = await setup({
-      "muse-spark-1.3": [find, priceTomato, textStream("DONE"), toolStream([["set_price", { product_id: 1, amount_naira: 600, unit: "each", quote: "600 now" }]]), textStream("DONE")],
+      "muse-spark-1.3": [find, priceTomato, textStream("DONE"), toolStream([["set_price", { product_id: 1, amount_naira: 600, unit: "each", quote: "Tomato don go up, 600 now" }]]), textStream("DONE")],
       "sam-3.1": masks,
     });
     await bot.receive(msg({ kind: "image", mediaId: "photo1" }));

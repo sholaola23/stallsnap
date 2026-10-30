@@ -152,6 +152,8 @@ export class Bot {
     const transcript =
       note.text ?? (await transcribeNote(client, await this.options.sender.download(note.mediaId!), session.products.map((p) => p.name)));
     session.pricing = await priceNote(client, session.pricing ?? startPricing(session.products), transcript);
+    // A rename by the trader also changes the names sent to the transcriber next time.
+    session.products = session.pricing.products.map((p) => ({ id: p.id, name: p.name }));
     this.save(from, session);
     await say(replyText(session.pricing));
   }

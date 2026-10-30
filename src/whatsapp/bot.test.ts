@@ -367,3 +367,19 @@ describe("the loop over a day of use", () => {
     ]);
   });
 });
+
+test("a renamed product is sent to the transcriber under its new name", async () => {
+  const said = "number 2 na Sunlight";
+  const { bot, sender, calls } = await setup({
+    "muse-spark-1.3": [find, toolStream([["rename_product", { product_id: 2, new_name: "Sunlight", quote: said }]]), textStream("DONE")],
+    "sam-3.1": masks,
+    "muse-voice-transcribe-1.0": JSON.stringify({ transcript: "Sunlight na 300" }),
+  });
+  await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+  await bot.receive(msg({ kind: "text", text: said }));
+  expect(last(sender)).toContain("How much is the Sunlight?");
+  const tone = Bun.spawn(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "libopus", "-f", "ogg", "pipe:1"], { stdout: "pipe" });
+  (sender as any).media.voice2 = Buffer.from(await new Response(tone.stdout).arrayBuffer());
+  await bot.receive(msg({ kind: "audio", mediaId: "voice2" }));
+  expect(calls.find((c) => c.model === "muse-voice-transcribe-1.0")!.body.keywords).toEqual(["Tomato", "Sunlight"]);
+});

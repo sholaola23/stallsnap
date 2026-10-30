@@ -2,7 +2,7 @@
 // calls (https://dev.meta.ai/docs/tool-calling). Our code checks every call before it changes the
 // list: a price must quote the trader's own words, and a product must come from the photo.
 import { MetaClient, type StreamEvent } from "../meta/client.ts";
-import { clauseTokens, isNumberWord, numberSpans, tokens, type NumberSpan } from "./numbers.ts";
+import { numberSpans, tokens, type NumberSpan } from "./numbers.ts";
 
 export { numbersIn } from "./numbers.ts";
 
@@ -157,10 +157,12 @@ function ownWords(state: PricingState, productId: number): Set<string> {
   return new Set(words(productId).filter((w) => !others.has(w)));
 }
 
-// Finds the number the trader said for this product in the quoted part of the note.
-// Returns the span, or an error the model sees.
+// Finds the one number the trader said for this product in the quoted part of the note.
+// Returns the span, or an error the model sees. A quote must name the product and hold one price:
+// the model can always quote "Milo na 1500" on its own, so a quote with two prices is refused
+// rather than guessed.
 function spokenPrice(state: PricingState, productId: number, quote: string, note: string): NumberSpan | string {
-  const { words, clause } = clauseTokens(note);
+  const words = tokens(note);
   const from = quoteAt(quote, words);
   const to = from + tokens(quote).length;
   const spans = numberSpans(words);
@@ -168,30 +170,41 @@ function spokenPrice(state: PricingState, productId: number, quote: string, note
   if (spans.some((s) => s.start < to && s.end > from && (s.start < from || s.end > to))) {
     return "error: the quote cuts a number short; quote the whole price as the trader said it";
   }
-  // Spans under 5 are "this one", "two tins": counts, not naira.
-  const prices = spans.filter((s) => s.start >= from && s.end <= to && !s.quantity && Math.max(...s.values) >= 5);
-  if (prices.length === 0) return "error: the quote has no price in it; quote the words where the trader says the price, or ask the trader";
-  if (prices.length === 1) return prices[0]!;
-
+  const inQuote = spans.filter((s) => s.start >= from && s.end <= to);
   const own = ownWords(state, productId);
-  const mentions = words.map((w, i) => i).filter((i) => i >= from && i < to && own.has(words[i]!));
-  if (mentions.length === 0) return "error: the quote has more than one price; quote only the words for this product";
-  // A price in the same clause as the product word ("Peak 500, Milo 1500").
-  let candidates = prices.filter((s) => mentions.some((m) => clause[m] === clause[s.start]));
-  if (candidates.length === 1) return candidates[0]!;
-  if (candidates.length === 0) candidates = prices;
-  // "500 for Peak" gives the 500 to Peak; "1500 for Milo" gives the 1500 to something else.
-  const pointsAt = (s: NumberSpan) => (words[s.end] === "for" && !isNumberWord(words[s.end + 1]) ? s.end + 1 : -1);
-  const attached = candidates.filter((s) => own.has(words[pointsAt(s)] ?? ""));
-  if (attached.length === 1) return attached[0]!;
-  candidates = candidates.filter((s) => pointsAt(s) === -1);
-  // Otherwise the price nearest the product word, either side; a tie is refused.
-  const distance = (s: NumberSpan) => Math.min(...mentions.map((m) => (m < s.start ? s.start - m : m - (s.end - 1))));
-  const ranked = [...candidates].sort((a, b) => distance(a) - distance(b));
-  if (ranked.length === 0 || (ranked.length > 1 && distance(ranked[0]!) === distance(ranked[1]!))) {
-    return "error: the quote has more than one price and it isn't clear which is for this product; quote only the words for this product";
+  const named = words.slice(from, to).some((w) => own.has(w));
+  const byNumber = inQuote.some((s) => words[s.start - 1] === "number" && s.values.includes(productId));
+  if (!named && !byNumber) return "error: the quote must name this product, by its name or as 'number N'";
+  // Not prices: "number 4", and counts under 5 such as "this one" or "two tins".
+  const prices = inQuote.filter((s) => words[s.start - 1] !== "number" && !s.quantity && Math.max(...s.values) >= 5);
+  if (prices.length === 0) return "error: the quote has no price in it; quote the words where the trader says the price, or ask the trader";
+  if (prices.length > 1) return "error: the quote has more than one price; quote only the words for this product, for example 'Milo na 1500'";
+  const owner = priceOwner(state, words, spans, prices[0]!);
+  if (owner !== null && owner !== productId) {
+    return "error: in the note that price is said for another product; quote the words where this product's price is said";
   }
-  return ranked[0]!;
+  return prices[0]!;
+}
+
+// Which product the note says a price is for: "500 for Peak", else the product named last before
+// it ("Peak na 500 Milo na 1500"), else the first one named after it ("500 naira, the Peak").
+function priceOwner(state: PricingState, words: readonly string[], spans: readonly NumberSpan[], price: NumberSpan): number | null {
+  const named: (number | null)[] = words.map(() => null);
+  for (const line of state.lines) {
+    const own = ownWords(state, line.productId);
+    words.forEach((w, i) => {
+      if (own.has(w)) named[i] = line.productId;
+    });
+  }
+  for (const s of spans) {
+    if (words[s.start - 1] === "number" && s.values.length === 1 && state.lines.some((l) => l.productId === s.values[0])) {
+      named[s.start] = s.values[0]!;
+    }
+  }
+  if (words[price.end] === "for" && named[price.end + 1] != null) return named[price.end + 1]!;
+  for (let i = price.start - 1; i >= 0; i--) if (named[i] != null) return named[i]!;
+  for (let i = price.end; i < words.length; i++) if (named[i] != null) return named[i]!;
+  return null;
 }
 
 interface ToolCall {

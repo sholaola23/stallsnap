@@ -54,7 +54,7 @@ Every Meta API call is paid, so the client guards each one:
 | Setting | Default | Effect |
 |---|---|---|
 | `STALLSNAP_LIVE` | `0` | Paid calls only happen when this is `1` |
-| `STALLSNAP_MAX_CALLS` | `10` | Most paid calls one command may make |
+| `STALLSNAP_MAX_CALLS` | `10` | Most paid calls one command, or one WhatsApp message on the server, may make |
 | `STALLSNAP_DAILY_CAP_USD` | `2` | Refuses a call that would take today's estimated spend (UTC day, this machine) past this |
 
 Answers are cached in `.cache/meta/` by request, so running the same photo again costs nothing. `bun run spend` shows today's estimated spend.

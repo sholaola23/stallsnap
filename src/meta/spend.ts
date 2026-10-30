@@ -75,6 +75,12 @@ export class Budget {
 
   constructor(readonly settings: BudgetSettings, private readonly now: () => Date = () => new Date()) {}
 
+  // A fresh call count with the same settings. The daily dollar cap is still shared through the
+  // ledger file, so a long-running server can count calls per message without a shared ceiling.
+  forJob(): Budget {
+    return new Budget(this.settings, this.now);
+  }
+
   spentToday(): number {
     if (!existsSync(this.settings.ledgerPath)) return 0;
     const day = this.now().toISOString().slice(0, 10);

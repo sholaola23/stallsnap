@@ -107,14 +107,16 @@ export class Bot {
 
   private async handle(message: Incoming): Promise<void> {
     const say = (text: string) => this.options.sender.sendText(message.from, text);
+    // STALLSNAP_MAX_CALLS caps each message; the daily dollar cap covers the whole server.
+    const client = this.options.client.withBudget(this.options.client.budget.forJob());
     try {
       switch (message.kind) {
         case "image":
-          return await this.onPhoto(message.from, message.mediaId, say);
+          return await this.onPhoto(client, message.from, message.mediaId, say);
         case "audio":
-          return await this.onNote(message.from, say, { mediaId: message.mediaId });
+          return await this.onNote(client, message.from, say, { mediaId: message.mediaId });
         case "text":
-          return await this.onText(message.from, message.text, say);
+          return await this.onText(client, message.from, message.text, say);
         default:
           return await say(COPY.unsupported);
       }
@@ -129,31 +131,32 @@ export class Bot {
     }
   }
 
-  private async onPhoto(from: string, mediaId: string, say: (t: string) => Promise<void>): Promise<void> {
+  private async onPhoto(client: MetaClient, from: string, mediaId: string, say: (t: string) => Promise<void>): Promise<void> {
     await say(COPY.working);
     const photo = await this.options.sender.download(mediaId);
-    const result = await photoToCutouts(this.options.client, photo);
+    const result = await photoToCutouts(client, photo);
     if (result.cutouts.length === 0) return say(COPY.noProducts);
-    // A new photo starts a new list but keeps the trader's link.
+    // A new photo starts a new list but keeps the trader's link. Products are numbered 1..n as the
+    // trader sees them, so "number 4" means the same product to the trader, the model and the page.
     const old = this.load(from);
-    const session: Session = { products: result.cutouts.map((c) => ({ id: c.productId, name: c.name })), pricing: null, slug: old?.slug ?? null };
+    const session: Session = { products: result.cutouts.map((c, i) => ({ id: i + 1, name: c.name })), pricing: null, slug: old?.slug ?? null };
     mkdirSync(this.sessionPath(from), { recursive: true });
-    for (const cut of result.cutouts) writeFileSync(join(this.sessionPath(from), `card-${cut.productId}.jpg`), cut.card);
+    result.cutouts.forEach((cut, i) => writeFileSync(join(this.sessionPath(from), `card-${i + 1}.jpg`), cut.card));
     this.save(from, session);
     await say(productListText(session.products.map((p) => p.name)));
   }
 
-  private async onNote(from: string, say: (t: string) => Promise<void>, note: { mediaId?: string; text?: string }): Promise<void> {
+  private async onNote(client: MetaClient, from: string, say: (t: string) => Promise<void>, note: { mediaId?: string; text?: string }): Promise<void> {
     const session = this.load(from);
     if (!session) return say(COPY.photoFirst);
     const transcript =
-      note.text ?? (await transcribeNote(this.options.client, await this.options.sender.download(note.mediaId!), session.products.map((p) => p.name)));
-    session.pricing = await priceNote(this.options.client, session.pricing ?? startPricing(session.products), transcript);
+      note.text ?? (await transcribeNote(client, await this.options.sender.download(note.mediaId!), session.products.map((p) => p.name)));
+    session.pricing = await priceNote(client, session.pricing ?? startPricing(session.products), transcript);
     this.save(from, session);
     await say(replyText(session.pricing));
   }
 
-  private async onText(from: string, text: string, say: (t: string) => Promise<void>): Promise<void> {
+  private async onText(client: MetaClient, from: string, text: string, say: (t: string) => Promise<void>): Promise<void> {
     const session = this.load(from);
     if (YES.test(text)) {
       if (!session?.pricing) return say(session ? COPY.pricesFirst : COPY.nothingToPublish);
@@ -165,6 +168,6 @@ export class Bot {
     }
     if (!session) return say(COPY.welcome);
     // Typed prices count the same as a voice note.
-    return this.onNote(from, say, { text });
+    return this.onNote(client, from, say, { text });
   }
 }

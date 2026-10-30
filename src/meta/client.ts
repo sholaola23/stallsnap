@@ -63,6 +63,11 @@ export class MetaClient {
     return this.options.budget;
   }
 
+  // The same client (key, cache, fetch) counting against another budget.
+  withBudget(budget: Budget): MetaClient {
+    return new MetaClient({ ...this.options, budget });
+  }
+
   cachePath(body: Record<string, unknown>): string {
     const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 24);
     return join(this.cacheDir, `${String(body.model)}-${hash}.json`);

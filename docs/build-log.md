@@ -37,6 +37,7 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - Only numbers on `ALLOWED_NUMBERS` are answered, before any paid call. A retried webhook is handled once, even across a restart. Each trader's messages run in order.
   - Spend cap, bad photos and bad voice notes each get a plain message to the trader.
   - Dockerfile with ffmpeg for Railway; data lives on a volume.
+- QA round 1 fixes to stage 4: `STALLSNAP_MAX_CALLS` now caps each WhatsApp message, and the daily dollar cap covers the whole server (before, the server paused every trader after 10 paid calls in its life). Products are numbered 1..n as the trader sees them, even when SAM skips one, so "number 4" means the same product everywhere.
 
 ### Decisions
 

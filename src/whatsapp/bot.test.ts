@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { CatalogueStore } from "../catalogue/store.ts";
 import { handler } from "../server.ts";
 import { parseAllowedNumbers } from "../main.ts";
@@ -101,7 +102,7 @@ describe("the WhatsApp conversation", () => {
 
   test("a change after publishing republishes to the same link", async () => {
     const { bot, sender } = await setup({
-      "muse-spark-1.3": [find, priceTomato, textStream("DONE"), toolStream([["set_price", { product_id: 1, amount_naira: 600, unit: "each", quote: "600" }]]), textStream("DONE")],
+      "muse-spark-1.3": [find, priceTomato, textStream("DONE"), toolStream([["set_price", { product_id: 1, amount_naira: 600, unit: "each", quote: "600 now" }]]), textStream("DONE")],
       "sam-3.1": masks,
     });
     await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
@@ -271,5 +272,98 @@ describe("settings", () => {
     expect([...parseAllowedNumbers("+44 7700 900123, (234) 800-000-0000,")]).toEqual(["447700900123", "2348000000000"]);
     expect(() => parseAllowedNumbers("me")).toThrow();
     expect(() => parseAllowedNumbers("123")).toThrow();
+  });
+});
+
+// QA round 1 (30 Oct) attacks on the whole loop.
+describe("the loop over a day of use", () => {
+  test("A4 a product the trader says they don't sell never reaches the page", async () => {
+    const said = "Tomato na 500. I no dey sell soap again";
+    const { bot, sender, store } = await setup({
+      "muse-spark-1.3": [
+        find,
+        toolStream([
+          ["set_price", { product_id: 1, amount_naira: 500, unit: "each", quote: "Tomato na 500" }],
+          ["remove_product", { product_id: 2, quote: "I no dey sell soap again" }],
+        ]),
+        textStream("DONE"),
+      ],
+      "sam-3.1": masks,
+    });
+    await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+    await bot.receive(msg({ kind: "text", text: said }));
+    expect(last(sender)).toContain("Taken off your list:\n- Blue soap bar");
+    await bot.receive(msg({ kind: "text", text: "YES" }));
+    const slug = last(sender).match(/\/c\/([a-z0-9]{12})/)![1]!;
+    expect(store.get(slug)!.items.map((i) => i.name)).toEqual(["Tomato"]);
+  });
+
+  test("A5 STALLSNAP_MAX_CALLS caps each message, not the server's whole life", async () => {
+    const { bot, sender, calls } = await setup(
+      { "muse-spark-1.3": [find, priceTomato, textStream("DONE"), find], "sam-3.1": masks },
+      testBudget({ maxCalls: 3 }),
+    );
+    const media = (sender as any).media as Record<string, Buffer>;
+    for (let i = 2; i <= 6; i++) media[`photo${i}`] = await sharp(await syntheticStall()).modulate({ brightness: 1 + i / 20 }).jpeg().toBuffer();
+    await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+    await bot.receive(msg({ kind: "text", text: note }));
+    await bot.receive(msg({ kind: "text", text: "YES" }));
+    for (let i = 2; i <= 6; i++) await bot.receive(msg({ kind: "image", mediaId: `photo${i}` }));
+    // 2 + 2 + 5 x 2 = 14 paid calls in all, never more than 3 for one message.
+    expect(calls.length).toBe(14);
+    expect(sender.sent.map((s) => s.body)).not.toContain(COPY.paused);
+  });
+
+  test("one message that needs more calls than STALLSNAP_MAX_CALLS is still paused", async () => {
+    const { bot, sender } = await setup({ "muse-spark-1.3": find, "sam-3.1": masks }, testBudget({ maxCalls: 1 }));
+    await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+    expect(last(sender)).toBe(COPY.paused);
+  });
+
+  test("the daily dollar cap still covers every message together", async () => {
+    const budget = testBudget({ dailyCapUsd: 0.05 });
+    const { bot, sender } = await setup({ "muse-spark-1.3": find, "sam-3.1": masks }, budget);
+    const media = (sender as any).media as Record<string, Buffer>;
+    media.photo2 = await sharp(await syntheticStall()).modulate({ brightness: 1.2 }).jpeg().toBuffer();
+    await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+    expect(last(sender)).toContain("I found 2 items");
+    // Another message's spend today, written to the shared ledger.
+    budget.record("muse-spark-1.3", 0.04);
+    await bot.receive(msg({ kind: "image", mediaId: "photo2" }));
+    expect(last(sender)).toBe(COPY.paused);
+  });
+
+  test("products are numbered 1..n as the trader sees them, even when one is skipped", async () => {
+    const three = textStream(
+      JSON.stringify({
+        products: [
+          { name: "Tomato", x_min: 120, y_min: 330, x_max: 380, y_max: 670 },
+          { name: "Pepper", x_min: 400, y_min: 330, x_max: 600, y_max: 670 },
+          { name: "Blue soap bar", x_min: 620, y_min: 330, x_max: 880, y_max: 670 },
+        ],
+      }),
+    );
+    // SAM returns nothing for product 2, so the trader sees Tomato and Blue soap bar as 1 and 2.
+    const twoMasks = samStream(
+      samLine([
+        { id: 1, left: 100, top: 200, right: 300, bottom: 400, fill: () => true },
+        { id: 3, left: 500, top: 200, right: 700, bottom: 400, fill: () => true },
+      ]),
+    );
+    const said = "number 2 na 300";
+    const { bot, sender, store } = await setup({
+      "muse-spark-1.3": [three, toolStream([["set_price", { product_id: 2, amount_naira: 300, unit: "each", quote: said }]]), textStream("DONE")],
+      "sam-3.1": twoMasks,
+    });
+    await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+    expect(last(sender)).toContain("1. Tomato\n2. Blue soap bar");
+    await bot.receive(msg({ kind: "text", text: said }));
+    expect(last(sender)).toContain("2. Blue soap bar: ₦300 each");
+    await bot.receive(msg({ kind: "text", text: "YES" }));
+    const slug = last(sender).match(/\/c\/([a-z0-9]{12})/)![1]!;
+    expect(store.get(slug)!.items).toEqual([
+      { name: "Tomato", amount: null, unit: null, image: "01.jpg" },
+      { name: "Blue soap bar", amount: 300, unit: "each", image: "02.jpg" },
+    ]);
   });
 });

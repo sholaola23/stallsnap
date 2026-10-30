@@ -16,7 +16,7 @@ function pricedState() {
     { id: 2, name: "Indomie <b>carton</b>" },
     { id: 3, name: "Spaghetti" },
   ]);
-  applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "na 1,500" }) }, note);
+  applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "each", quote: "Peak milk na 1,500" }) }, note);
   return state;
 }
 
@@ -55,7 +55,7 @@ describe("publishing", () => {
   test("republishing to the same slug replaces the list", () => {
     const { store, catalogue } = setup();
     const state = pricedState();
-    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "per tin", quote: "na 1,500" }) }, note);
+    applyTool(state, { name: "set_price", arguments: JSON.stringify({ product_id: 1, amount_naira: 1500, unit: "per tin", quote: "Peak milk na 1,500" }) }, note);
     store.publish(state, new Map([[1, card]]), "Mama Ngozi's Provisions", catalogue.slug);
     expect(store.get(catalogue.slug)!.items).toEqual([{ name: "Peak milk tin", amount: 1500, unit: "per tin", image: "01.jpg" }]);
   });

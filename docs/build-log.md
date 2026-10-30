@@ -25,6 +25,11 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - A later voice note corrects the list; the reply the trader reads is written by our code, not the model.
   - `bun run price <summary.json> <note>` prices the products from a photo run.
 
+- Stage 3, web catalogue (`src/catalogue/`, `src/server.ts`):
+  - Publishing writes the price list and one card per product under a random 12-character link; only products with a real cut-out are published, and unpriced ones say "Ask for price".
+  - The page is plain HTML and CSS with no scripts, light and dark, sized for cheap phones. 0 axe violations and no sideways scroll at 320 to 1280px (synthetic test data).
+  - The Bun server serves `/c/<link>` and its pictures, with a strict content security policy.
+
 ### Decisions
 
 | Decision | Why |
@@ -37,3 +42,4 @@ Dated record of what was built and when, for the hackathon rule that only work f
 | Things priced but not in the photo are listed back, never added | StallSnap only shows products the trader actually photographed. |
 | Voice biased to English plus the photo's product names | Pidgin isn't one of the 25 supported languages; it is English-based, and the names help with brand words. |
 | The model's tool loop stops after 6 turns | Bounds the cost of one voice note even if the model keeps calling tools. |
+| Catalogue page has no JavaScript | Loads fast on mobile data and leaves nothing to break or exploit. |

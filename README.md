@@ -12,7 +12,8 @@ Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design note
 |---|---|---|
 | Find the products | Muse Spark 1.3 | Lists each product line on the stall with a box around one clear example |
 | Cut them out | SAM 3.1 | Turns each box into a pixel mask; each product is cut from the trader's own photo |
-| Read the prices | Muse Voice Transcribe, Muse Spark | Coming next |
+| Hear the prices | Muse Voice Transcribe | Turns the voice note into text, biased to the product names from the photo |
+| Match the prices | Muse Spark (tool calls) | Sets each price with the trader's own words as proof, and asks about anything unpriced |
 | Catalogue page | | Coming next |
 | WhatsApp loop | | Coming next |
 
@@ -34,7 +35,13 @@ set -a; . ./.env; set +a
 STALLSNAP_LIVE=1 bun run cutouts path/to/stall.jpg
 ```
 
-This writes `out/<photo name>/`: one transparent PNG and one white catalogue card per product, `overlay.jpg` with the masks drawn on the photo, and `summary.json` with what was found, what was skipped and what the run cost.
+Then price those products from a voice note (or a `.txt` transcript). Voice notes need `ffmpeg`.
+
+```bash
+STALLSNAP_LIVE=1 bun run price out/stall/summary.json note.ogg
+```
+
+The cut-out command writes `out/<photo name>/`: one transparent PNG and one white catalogue card per product, `overlay.jpg` with the masks drawn on the photo, and `summary.json` with what was found, what was skipped and what the run cost.
 
 ## Spend limits
 

@@ -12,6 +12,8 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
+      # The voice tests convert Ogg Opus with ffmpeg, as the server does.
+      - run: ffmpeg -version | head -1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - run: bun run typecheck
       # STALLSNAP_LIVE stays unset, so no test can make a paid call.
       - run: bun test

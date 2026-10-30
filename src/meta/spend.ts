@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 const SPARK_PER_TOKEN = { input: 1.25e-6, cachedInput: 0.15e-6, output: 4.25e-6 };
 const SAM_PER_IMAGE = 0.0025;
 const IMAGE_PER_PICTURE = 0.01;
-const TRANSCRIBE_PER_SECOND = 0.36 / 3600; // ceiling estimate until the voice step measures it
+const TRANSCRIBE_PER_SECOND = 0.18 / 3600;
 
 export interface Usage {
   input_tokens?: number;

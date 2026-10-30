@@ -69,13 +69,24 @@ export interface FakeCall {
 }
 
 // Routes each request by model to a canned answer (or a status code) and records the calls.
-export function fakeFetch(answers: Record<string, string | number>): { fetch: typeof fetch; calls: FakeCall[] } {
+// An array answer is used in order, one entry per call; the last entry repeats.
+export type FakeAnswer = string | number | (string | number)[];
+
+export function fakeFetch(answers: Record<string, FakeAnswer>): { fetch: typeof fetch; calls: FakeCall[] } {
   const calls: FakeCall[] = [];
   const impl = async (_url: string | URL | Request, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    let body: Record<string, unknown>;
+    if (init?.body instanceof FormData) {
+      body = JSON.parse(await (init.body.get("request") as Blob).text()) as Record<string, unknown>;
+      body.audioBytes = (init.body.get("audio") as Blob).size;
+    } else {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    }
     const model = String(body.model);
+    const count = calls.filter((c) => c.model === model).length;
     calls.push({ model, body });
-    const answer = answers[model];
+    const entry = answers[model];
+    const answer = Array.isArray(entry) ? entry[Math.min(count, entry.length - 1)] : entry;
     if (answer === undefined) return new Response(`no fake for ${model}`, { status: 404 });
     if (typeof answer === "number") return new Response("fake failure", { status: answer });
     return new Response(answer, { status: 200, headers: { "Content-Type": "text/event-stream" } });
@@ -88,9 +99,20 @@ export function testBudget(overrides: Partial<BudgetSettings> = {}): Budget {
   return new Budget({ live: true, maxCalls: 10, dailyCapUsd: 2, ledgerPath: join(dir, "spend.jsonl"), ...overrides });
 }
 
-export function testClient(answers: Record<string, string | number>, budget = testBudget()) {
+export function testClient(answers: Record<string, FakeAnswer>, budget = testBudget()) {
   const fake = fakeFetch(answers);
   const cacheDir = mkdtempSync(join(tmpdir(), "stallsnap-cache-"));
   const client = new MetaClient({ budget, apiKey: "test-key", fetch: fake.fetch, cacheDir });
   return { client, calls: fake.calls, budget, cacheDir };
+}
+
+// A Spark turn that calls tools: each entry is [name, arguments].
+export function toolStream(calls: [string, Record<string, unknown>][]): string {
+  return sse([
+    ...calls.map(([name, args], i) => ({
+      type: "response.output_item.done",
+      item: { type: "function_call", status: "completed", call_id: `call_${i}_${name}`, name, arguments: JSON.stringify(args) },
+    })),
+    { type: "response.completed", response: { usage: { input_tokens: 800, output_tokens: 120 } } },
+  ]);
 }

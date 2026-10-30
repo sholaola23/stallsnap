@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { CatalogueStore } from "../catalogue/store.ts";
 import { PhotoError } from "../image/photo.ts";
 import { photoToCutouts } from "../image/pipeline.ts";
+import { restyleCard } from "../image/restyle.ts";
 import type { MetaClient } from "../meta/client.ts";
 import { SpendRefused } from "../meta/spend.ts";
 import { priceNote, replyText, startPricing, type PricingState } from "../pricing/agent.ts";
@@ -24,6 +25,7 @@ export const COPY = {
   failed: "Sorry, something went wrong on my side. Please send that again.",
   nothingToPublish: "There's nothing to publish yet. Send a photo of your stall to start.",
   pricesFirst: "Send a voice note with your prices first, then reply YES.",
+  publishing: "Getting your price list ready. I'm tidying up the photos, this takes about a minute.",
 };
 
 const YES = /^\s*(yes|yes o|yeah|yep|ok|okay|confirm|publish)\s*[.!]*\s*$/i;
@@ -42,6 +44,7 @@ export interface BotOptions {
   publicUrl: string; // e.g. https://stallsnap.up.railway.app
   stallName: string;
   allowedNumbers: ReadonlySet<string>;
+  restyle?: boolean; // tidy the cut-outs with Muse Image before publishing
   log?: (message: string) => void;
 }
 
@@ -131,6 +134,24 @@ export class Bot {
     }
   }
 
+  // Restyles the cards that will be published, four at a time. A card Muse Image can't restyle
+  // faithfully (or any failure, including the spend cap) keeps the plain cut-out.
+  private async restyled(client: MetaClient, cards: Map<number, Buffer>, pricing: PricingState): Promise<Map<number, Buffer>> {
+    const lines = pricing.lines.filter((l) => !l.removed && cards.has(l.productId));
+    const out = new Map(cards);
+    let next = 0;
+    const worker = async () => {
+      while (next < lines.length) {
+        const line = lines[next++]!;
+        const result = await restyleCard(client, cards.get(line.productId)!, line.name);
+        out.set(line.productId, result.card);
+        if (!result.restyled) this.options.log?.(`kept the plain cut-out for product ${line.productId}: ${result.reason}`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    return out;
+  }
+
   private async onPhoto(client: MetaClient, from: string, mediaId: string, say: (t: string) => Promise<void>): Promise<void> {
     await say(COPY.working);
     const photo = await this.options.sender.download(mediaId);
@@ -162,7 +183,12 @@ export class Bot {
     const session = this.load(from);
     if (YES.test(text)) {
       if (!session?.pricing) return say(session ? COPY.pricesFirst : COPY.nothingToPublish);
-      const catalogue = this.options.store.publish(session.pricing, this.cards(from, session), this.options.stallName, session.slug ?? undefined);
+      let cards = this.cards(from, session);
+      if (this.options.restyle) {
+        await say(COPY.publishing);
+        cards = await this.restyled(client, cards, session.pricing);
+      }
+      const catalogue = this.options.store.publish(session.pricing, cards, this.options.stallName, session.slug ?? undefined);
       session.slug = catalogue.slug;
       this.save(from, session);
       const link = `${this.options.publicUrl.replace(/\/$/, "")}/c/${catalogue.slug}`;

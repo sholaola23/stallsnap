@@ -20,6 +20,12 @@ export function parseAllowedNumbers(raw: string): Set<string> {
   return new Set(numbers);
 }
 
+export function restyleSetting(raw: string | undefined): boolean {
+  const value = raw ?? "1";
+  if (value !== "0" && value !== "1") throw new Error(`STALLSNAP_RESTYLE must be 0 or 1, got "${value}"`);
+  return value === "1";
+}
+
 export async function startFromEnv(env: Record<string, string | undefined> = process.env): Promise<void> {
   const dataDir = env.STALLSNAP_DATA_DIR ?? "data";
   const store = new CatalogueStore(join(dataDir, "catalogues"));
@@ -37,6 +43,7 @@ export async function startFromEnv(env: Record<string, string | undefined> = pro
       publicUrl: env.PUBLIC_URL!,
       stallName: env.CATALOGUE_STALL_NAME?.trim() || "Price list",
       allowedNumbers: parseAllowedNumbers(env.ALLOWED_NUMBERS!),
+      restyle: restyleSetting(env.STALLSNAP_RESTYLE),
       log: (m) => console.log(`[bot] ${m}`),
     });
     webhook = { bot, appSecret: env.APP_SECRET!, verifyToken: env.WHATSAPP_VERIFY_TOKEN! };

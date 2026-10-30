@@ -2,7 +2,7 @@
 // calls (https://dev.meta.ai/docs/tool-calling). Our code checks every call before it changes the
 // list: a price must quote the trader's own words, and a product must come from the photo.
 import { MetaClient, type StreamEvent } from "../meta/client.ts";
-import { numberSpans, tokens } from "./numbers.ts";
+import { clauseTokens, isNumberWord, numberSpans, tokens, type NumberSpan } from "./numbers.ts";
 
 export { numbersIn } from "./numbers.ts";
 
@@ -136,16 +136,18 @@ function listText(state: PricingState): string {
     .join("\n");
 }
 
-// True when the quote is the trader's own words: whole words, in order, at least two of them.
-function quoteIn(quote: unknown, note: string): quote is string {
-  if (typeof quote !== "string") return false;
+// Where the quote sits in the note, by word: whole words, in order, at least two. -1 when it isn't there.
+function quoteAt(quote: string, words: readonly string[]): number {
   const q = tokens(quote);
-  const heard = tokens(note);
-  if (q.length < 2) return false;
-  for (let i = 0; i + q.length <= heard.length; i++) {
-    if (q.every((word, j) => heard[i + j] === word)) return true;
+  if (q.length < 2) return -1;
+  for (let i = 0; i + q.length <= words.length; i++) {
+    if (q.every((word, j) => words[i + j] === word)) return i;
   }
-  return false;
+  return -1;
+}
+
+function quoteIn(quote: unknown, note: string): quote is string {
+  return typeof quote === "string" && quoteAt(quote, tokens(note)) !== -1;
 }
 
 // Words that name this product and no other, so "Peak 500, Milo 1500" can be read product by product.
@@ -155,23 +157,41 @@ function ownWords(state: PricingState, productId: number): Set<string> {
   return new Set(words(productId).filter((w) => !others.has(w)));
 }
 
-// Checks that the quote says this amount for this product. Returns an error, or null when it does.
-export function priceCheck(state: PricingState, productId: number, amount: number, quote: string): string | null {
-  const words = tokens(quote);
+// Finds the number the trader said for this product in the quoted part of the note.
+// Returns the span, or an error the model sees.
+function spokenPrice(state: PricingState, productId: number, quote: string, note: string): NumberSpan | string {
+  const { words, clause } = clauseTokens(note);
+  const from = quoteAt(quote, words);
+  const to = from + tokens(quote).length;
+  const spans = numberSpans(words);
+  // "two thousand" quoted from "two thousand five hundred" is not what the trader said.
+  if (spans.some((s) => s.start < to && s.end > from && (s.start < from || s.end > to))) {
+    return "error: the quote cuts a number short; quote the whole price as the trader said it";
+  }
   // Spans under 5 are "this one", "two tins": counts, not naira.
-  const prices = numberSpans(words).filter((s) => !s.quantity && Math.max(...s.values) >= 5);
+  const prices = spans.filter((s) => s.start >= from && s.end <= to && !s.quantity && Math.max(...s.values) >= 5);
   if (prices.length === 0) return "error: the quote has no price in it; quote the words where the trader says the price, or ask the trader";
-  let span = prices[0]!;
-  if (prices.length > 1) {
-    const own = ownWords(state, productId);
-    const mention = words.findIndex((w) => own.has(w));
-    if (mention === -1) return "error: the quote has more than one price; quote only the words for this product";
-    span = prices.find((s) => s.start > mention) ?? prices.filter((s) => s.start < mention).at(-1)!;
+  if (prices.length === 1) return prices[0]!;
+
+  const own = ownWords(state, productId);
+  const mentions = words.map((w, i) => i).filter((i) => i >= from && i < to && own.has(words[i]!));
+  if (mentions.length === 0) return "error: the quote has more than one price; quote only the words for this product";
+  // A price in the same clause as the product word ("Peak 500, Milo 1500").
+  let candidates = prices.filter((s) => mentions.some((m) => clause[m] === clause[s.start]));
+  if (candidates.length === 1) return candidates[0]!;
+  if (candidates.length === 0) candidates = prices;
+  // "500 for Peak" gives the 500 to Peak; "1500 for Milo" gives the 1500 to something else.
+  const pointsAt = (s: NumberSpan) => (words[s.end] === "for" && !isNumberWord(words[s.end + 1]) ? s.end + 1 : -1);
+  const attached = candidates.filter((s) => own.has(words[pointsAt(s)] ?? ""));
+  if (attached.length === 1) return attached[0]!;
+  candidates = candidates.filter((s) => pointsAt(s) === -1);
+  // Otherwise the price nearest the product word, either side; a tie is refused.
+  const distance = (s: NumberSpan) => Math.min(...mentions.map((m) => (m < s.start ? s.start - m : m - (s.end - 1))));
+  const ranked = [...candidates].sort((a, b) => distance(a) - distance(b));
+  if (ranked.length === 0 || (ranked.length > 1 && distance(ranked[0]!) === distance(ranked[1]!))) {
+    return "error: the quote has more than one price and it isn't clear which is for this product; quote only the words for this product";
   }
-  if (!span.values.includes(amount)) {
-    return `error: the quote says ${span.values.join(" or ")}, not ${amount}; quote the words where this price is said`;
-  }
-  return null;
+  return ranked[0]!;
 }
 
 interface ToolCall {
@@ -201,8 +221,11 @@ export function applyTool(state: PricingState, call: { name: string; arguments: 
       const unit = typeof args.unit === "string" ? args.unit.trim() : "";
       if (!unit) return "error: unit is required, for example 'each'";
       if (!quoteOk(args.quote)) return "error: quote must be two or more whole words copied exactly from the voice note";
-      const wrong = priceCheck(state, line.productId, amount, args.quote);
-      if (wrong) return wrong;
+      const said = spokenPrice(state, line.productId, args.quote, note);
+      if (typeof said === "string") return said;
+      if (!said.values.includes(amount)) {
+        return `error: the trader said ${said.values.join(" or ")}, not ${amount}; quote the words where this price is said`;
+      }
       // A price for a removed product means the trader sells it after all.
       Object.assign(line, { amount, unit, quote: args.quote.trim(), question: null, removed: false });
       return `ok: ${line.name} is ₦${amount} ${unit}`;

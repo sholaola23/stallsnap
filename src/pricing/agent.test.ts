@@ -95,7 +95,7 @@ describe("tool calls the code refuses", () => {
   test("an amount that doesn't match the number in the quote", () => {
     for (const amount of [15000, 150, 1501]) {
       const { state, result } = run("set_price", { product_id: 1, amount_naira: amount, unit: "each", quote: "Peak milk na 1,500 each" });
-      expect(result).toContain("the quote says 1500");
+      expect(result).toContain("the trader said 1500");
       expect(state.lines[0]!.amount).toBeNull();
     }
   });
@@ -197,6 +197,32 @@ describe("a price nobody said is refused", () => {
     expect(applyTool(state, set(1, 500, said), said)).toStartWith("ok");
     expect(applyTool(state, set(2, 1500, said), said)).toStartWith("ok");
     expect(state.lines.map((l) => l.amount)).toEqual([500, 1500]);
+  });
+
+  test("B1 a quote that cuts a number short is refused", () => {
+    const state = startPricing(two);
+    const said = "Peak milk na two thousand five hundred";
+    expect(applyTool(state, set(1, 2000, "Peak milk na two thousand"), said)).toStartWith("error: the quote cuts a number short");
+    expect(applyTool(state, set(1, 2, "Peak milk na 2"), "Peak milk na 2 k each")).toStartWith("error");
+    expect(state.lines[0]!.amount).toBeNull();
+    expect(applyTool(state, set(1, 2500, said), said)).toStartWith("ok");
+  });
+
+  test("B3 a price said before the product goes to that product", () => {
+    for (const said of ["na 500 for Peak, 1500 for Milo", "na 500 for Peak 1500 for Milo"]) {
+      const state = startPricing(two);
+      expect(applyTool(state, set(1, 1500, said), said)).toStartWith("error");
+      expect(applyTool(state, set(2, 500, said), said)).toStartWith("error");
+      expect(applyTool(state, set(1, 500, said), said)).toStartWith("ok");
+      expect(applyTool(state, set(2, 1500, said), said)).toStartWith("ok");
+    }
+  });
+
+  test("two prices equally near the product word are refused", () => {
+    const state = startPricing(two);
+    const said = "500 Peak 1500";
+    expect(applyTool(state, set(1, 500, said), said)).toStartWith("error");
+    expect(applyTool(state, set(1, 1500, said), said)).toStartWith("error");
   });
 
   test("two numbers and no product word is refused rather than guessed", () => {

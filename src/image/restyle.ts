@@ -11,6 +11,8 @@ const GRID = 48; // pictures are compared on a 48 x 48 grid
 const WHITE = 235; // a grid cell with every channel above this counts as background
 export const MAX_COLOUR_CHANGE = 45; // mean change per channel, 0-255, over the product
 export const MAX_NEW_SHAPES = 0.08; // share of the old background that may stop being white
+export const MAX_OUTLINE_CHANGE = 1.2; // the product's width-to-height ratio may change by at most this factor
+const INK = 225; // a pixel with any channel below this is part of the product when finding its outline
 
 export function restyleRequest(card: Buffer, name: string): Record<string, unknown> {
   return {
@@ -65,17 +67,77 @@ export interface Restyled {
   reason: string;
 }
 
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+// The product's outline on a white card: rows and columns with at least 3 product pixels, so faint
+// specks and the light ghost pattern Muse Image leaves on its backgrounds don't count.
+async function productBox(picture: Buffer): Promise<Box | null> {
+  const { data, info } = await sharp(picture).flatten({ background: "#ffffff" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const rows = new Array<number>(info.height).fill(0);
+  const cols = new Array<number>(info.width).fill(0);
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      const i = (y * info.width + x) * 3;
+      if (Math.min(data[i]!, data[i + 1]!, data[i + 2]!) < INK) {
+        rows[y]! += 1;
+        cols[x]! += 1;
+      }
+    }
+  }
+  const span = (counts: number[]) => {
+    const first = counts.findIndex((c) => c >= 3);
+    return [first, counts.length - 1 - [...counts].reverse().findIndex((c) => c >= 3)] as const;
+  };
+  const [top, bottom] = span(rows);
+  const [left, right] = span(cols);
+  if (top < 0 || left < 0) return null;
+  return { left, top, width: right - left + 1, height: bottom - top + 1 };
+}
+
+// Muse Image often zooms in on the product. Put its product back where, and as big as, the cut-out
+// had it, on pure white, so the comparison lines up pixel for pixel and the page keeps the trader's framing.
+async function alignTo(box: Box, picture: Buffer, pictureBox: Box): Promise<Buffer> {
+  const product = await sharp(picture)
+    .extract(pictureBox)
+    .resize(box.width, box.height, { fit: "fill" })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const { data } = product;
+  for (let i = 0; i < data.length; i += 3) {
+    if (data[i]! > WHITE && data[i + 1]! > WHITE && data[i + 2]! > WHITE) data.fill(255, i, i + 3);
+  }
+  const raw = { width: product.info.width, height: product.info.height, channels: 3 as const };
+  return sharp({ create: { width: CARD_SIZE, height: CARD_SIZE, channels: 3, background: "#ffffff" } })
+    .composite([{ input: data, raw, left: box.left, top: box.top }])
+    .jpeg({ quality: 88 })
+    .toBuffer();
+}
+
 // Never throws: any failure (API, spend guard, a picture that doesn't match) keeps the plain card.
 export async function restyleCard(client: MetaClient, card: Buffer, name: string): Promise<Restyled> {
   try {
     const result = await client.editImage(restyleRequest(card, name));
     const b64 = result.data?.[0]?.b64_json;
     if (!b64) return { card, restyled: false, reason: "no picture returned" };
-    const picture = await sharp(Buffer.from(b64, "base64"))
+    const returned = await sharp(Buffer.from(b64, "base64"))
       .flatten({ background: "#ffffff" })
       .resize(CARD_SIZE, CARD_SIZE, { fit: "contain", background: "#ffffff" })
       .jpeg({ quality: 88 })
       .toBuffer();
+    const [box, returnedBox] = await Promise.all([productBox(card), productBox(returned)]);
+    if (!box || !returnedBox) return { card, restyled: false, reason: "no product found in the picture" };
+    // A stack of two sachets coming back as two stacks, or a cut-off item "completed", changes the outline.
+    const outline = returnedBox.width / returnedBox.height / (box.width / box.height);
+    if (Math.max(outline, 1 / outline) > MAX_OUTLINE_CHANGE) {
+      return { card, restyled: false, reason: `the product's outline changed (${Math.max(outline, 1 / outline).toFixed(2)} > ${MAX_OUTLINE_CHANGE})` };
+    }
+    const picture = await alignTo(box, returned, returnedBox);
     const like = await likeness(card, picture);
     if (like.colourChange > MAX_COLOUR_CHANGE) {
       return { card, restyled: false, reason: `product changed too much (${like.colourChange.toFixed(0)} > ${MAX_COLOUR_CHANGE})` };

@@ -45,6 +45,7 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - On YES, each card going on the page is sent to Muse Image (`/v1/images/edits`) to get a plain white background and even light. Web and image search are off, so it can't swap in a stock picture.
   - Our code compares the result with the cut-out on a 48 x 48 grid. If the product's colours moved too far, or something appeared on the old white background, the plain cut-out is published instead. Any failure, including the spend cap, also keeps the plain cut-out.
   - `bun run restyle <cut-out dir> [n]` shows the cut-out and Muse Image's picture side by side.
+- Stage 5 live check (Shola's Mac, 7 cut-outs from two third-party test photos, $0.07): the first guard kept all 7, but looking at them showed one stack of two sachets had come back as two stacks of two, and another had its hidden half redrawn. Muse Image had also zoomed in on every product, which hid the change from a grid check, and left a faint grey pattern on the background. Fix: the guard now finds the product's outline in both pictures, refuses the picture if the outline's shape changed, and otherwise puts Muse Image's product back at the cut-out's size and place on pure white before comparing. Re-checked on the same 7 answers with no new calls: 5 kept, the 2 changed sachets refused.
 
 ### Decisions
 
@@ -60,6 +61,7 @@ Dated record of what was built and when, for the hackathon rule that only work f
 | Things priced but not in the photo are listed back, never added | StallSnap only shows products the trader actually photographed. |
 | Voice biased to English plus the photo's product names | Pidgin isn't one of the 25 supported languages; it is English-based, and the names help with brand words. |
 | Muse Image's result is checked against the cut-out, and refused if the product changed | Muse Image may only restyle a real product. A plain cut-out is better than a nicer picture of something the trader doesn't stock. |
+| The check compares outlines first, then lines the pictures up | Muse Image zooms in, so a straight grid comparison missed a doubled stack in the live check. |
 | The model's tool loop stops after 6 turns | Bounds the cost of one voice note even if the model keeps calling tools. |
 | Catalogue page has no JavaScript | Loads fast on mobile data and leaves nothing to break or exploit. |
 | Phone numbers are hashed before they name a session folder | Keeps numbers out of file names and logs. |

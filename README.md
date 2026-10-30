@@ -14,7 +14,7 @@ Before the hackathon kickoff (16:00 UK, Mon 26 Oct 2026), there were design note
 | Cut them out | SAM 3.1 | Turns each box into a pixel mask; each product is cut from the trader's own photo |
 | Hear the prices | Muse Voice Transcribe | Turns the voice note into text, biased to the product names from the photo |
 | Match the prices | Muse Spark (tool calls) | Sets each price with the trader's own words as proof, and asks about anything unpriced |
-| Tidy the pictures | Muse Image | Gives each real cut-out a plain white background and even light; our code compares the result with the cut-out and keeps the plain cut-out if the product changed |
+| Tidy the pictures | Muse Image | Gives each real cut-out a plain white background and even light; our code puts it back at the cut-out's size and place, compares it with the cut-out, and keeps the plain cut-out if the product's outline or colours changed |
 | Catalogue page | | A public web page per trader, one card per product with its price, shared as a link |
 | WhatsApp loop | WhatsApp Cloud API | The trader sends a photo and a voice note, replies YES, and gets the link back |
 
@@ -44,7 +44,7 @@ STALLSNAP_LIVE=1 bun run price out/stall/summary.json note.ogg
 
 The cut-out command writes `out/<photo name>/`: one transparent PNG and one white catalogue card per product, `overlay.jpg` with the masks drawn on the photo, and `summary.json` with what was found, what was skipped and what the run cost.
 
-To see what Muse Image would do to the first few cards of a cut-out run ($0.01 each), writing `NN-clean.jpg` and a side-by-side `NN-compare.jpg`:
+To see what Muse Image would do to the first few cards of a cut-out run ($0.01 each), writing `NN-clean.jpg` and `NN-compare.jpg` (cut-out, Muse Image's picture, what gets published):
 
 ```bash
 STALLSNAP_LIVE=1 bun run restyle out/stall 3

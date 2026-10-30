@@ -42,7 +42,39 @@ describe("Muse Image tidies a real cut-out", () => {
     const { client } = testClient({ [IMAGE_MODEL]: await answer(await card(extra)) });
     const result = await restyleCard(client, await card(), "red ankara fabric");
     expect(result.restyled).toBe(false);
-    expect(result.reason).toContain("something was added");
+    expect(result.card).toEqual(await card());
+  });
+
+  // Live check 30 Oct: a stack of two seasoning sachets came back as two stacks of two, and the old
+  // colour and background check let it through because Muse Image had also zoomed in.
+  const stack = async (boxes: string, background = "#ffffff") =>
+    sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600">
+      <rect width="100%" height="100%" fill="${background}"/>${boxes}</svg>`)).jpeg().toBuffer();
+  const sachets = (x: number, y: number, w: number, h: number) =>
+    `<rect x="${x}" y="${y}" width="${w}" height="${h / 2 - 2}" fill="#7a3a8a"/><rect x="${x}" y="${y + h / 2}" width="${w}" height="${h / 2}" fill="#9ac060"/>`;
+
+  test("a stack that comes back doubled is refused, even when Muse Image also zoomed in (live check 30 Oct)", async () => {
+    const original = await stack(sachets(280, 240, 40, 120));
+    const doubled = await stack(sachets(270, 140, 60, 160) + sachets(270, 310, 60, 160));
+    const { client } = testClient({ [IMAGE_MODEL]: await answer(doubled) });
+    const result = await restyleCard(client, original, "seasoning sachets");
+    expect(result.restyled).toBe(false);
+    expect(result.reason).toContain("outline changed");
+    expect(result.card).toEqual(original);
+  });
+
+  test("a zoomed-in clean-up is put back at the cut-out's size and place, on pure white", async () => {
+    const original = await stack(sachets(280, 240, 40, 120));
+    // Same product, twice as big, on the faint grey ghost lines Muse Image leaves behind.
+    const ghost = Array.from({ length: 30 }, (_, i) => `<rect x="0" y="${i * 20}" width="600" height="3" fill="#f0f0f0"/>`).join("");
+    const zoomed = await stack(ghost + sachets(260, 180, 80, 240));
+    const { client } = testClient({ [IMAGE_MODEL]: await answer(zoomed) });
+    const result = await restyleCard(client, original, "seasoning sachets");
+    expect(result.restyled).toBe(true);
+    const { data } = await sharp(result.card).raw().toBuffer({ resolveWithObject: true });
+    const at = (x: number, y: number) => [...data.subarray((y * 600 + x) * 3, (y * 600 + x) * 3 + 3)];
+    expect(at(300, 260).every((c) => c < 200)).toBe(true); // product where the cut-out had it
+    for (const [x, y] of [[300, 220], [300, 380], [100, 40], [500, 500]] as const) expect(at(x, y)).toEqual([255, 255, 255]); // nothing outside it
   });
 
   test("an API error, an empty answer or the spend cap keeps the plain cut-out and never throws", async () => {

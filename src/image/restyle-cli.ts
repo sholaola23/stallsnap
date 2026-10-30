@@ -7,7 +7,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { MetaClient } from "../meta/client.ts";
 import { Budget, budgetFromEnv } from "../meta/spend.ts";
-import { likeness, restyleCard, restyleRequest } from "./restyle.ts";
+import { restyleCard, restyleRequest } from "./restyle.ts";
 
 const [dir, countArg] = process.argv.slice(2);
 if (!dir) {
@@ -32,12 +32,12 @@ for (const file of cards) {
   const right = raw
     ? await sharp(Buffer.from(raw, "base64")).flatten({ background: "#ffffff" }).resize(600, 600, { fit: "contain", background: "#ffffff" }).jpeg().toBuffer()
     : card;
-  const compare = await sharp({ create: { width: 1200, height: 600, channels: 3, background: "#ffffff" } })
-    .composite([{ input: card, left: 0, top: 0 }, { input: right, left: 600, top: 0 }])
+  // Left to right: the cut-out, Muse Image's picture, what the page publishes.
+  const compare = await sharp({ create: { width: 1800, height: 600, channels: 3, background: "#ffffff" } })
+    .composite([{ input: card, left: 0, top: 0 }, { input: right, left: 600, top: 0 }, { input: result.card, left: 1200, top: 0 }])
     .jpeg({ quality: 85 })
     .toBuffer();
   writeFileSync(join(dir, `${prefix}-compare.jpg`), compare);
-  const like = raw ? await likeness(card, right) : null;
-  console.log(`${prefix} ${name}: ${result.restyled ? "restyled" : "plain cut-out"} (${result.reason})${like ? ` change=${like.colourChange.toFixed(1)} added=${(like.newShapes * 100).toFixed(1)}%` : ""}`);
+  console.log(`${prefix} ${name}: ${result.restyled ? "restyled" : "plain cut-out"} (${result.reason})`);
 }
 console.log(`Paid calls: ${budget.paidCalls}, spend this run: $${budget.runSpendUsd.toFixed(4)}.`);

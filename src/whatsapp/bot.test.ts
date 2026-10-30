@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { createHash, createHmac } from "node:crypto";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { CatalogueStore } from "../catalogue/store.ts";
 import { handler } from "../server.ts";
-import { parseAllowedNumbers } from "../main.ts";
+import { parseAllowedNumbers, restyleSetting } from "../main.ts";
 import { samLine, samStream, syntheticStall, testBudget, testClient, textStream, toolStream } from "../test/fakes.ts";
 import { Bot, COPY } from "./bot.ts";
 import type { WhatsAppSender } from "./graph.ts";
@@ -382,4 +382,40 @@ test("a renamed product is sent to the transcriber under its new name", async ()
   (sender as any).media.voice2 = Buffer.from(await new Response(tone.stdout).arrayBuffer());
   await bot.receive(msg({ kind: "audio", mediaId: "voice2" }));
   expect(calls.find((c) => c.model === "muse-voice-transcribe-1.0")!.body.keywords).toEqual(["Tomato", "Sunlight"]);
+});
+
+test("with restyle on, YES publishes Muse Image's tidied card, and only for products on the list", async () => {
+  const said = "Tomato na 500. I no dey sell soap again";
+  const tidied = await sharp({ create: { width: 600, height: 600, channels: 3, background: "#ffffff" } }).jpeg().toBuffer();
+  const { make, sender, store, calls, dataDir } = await setup({
+    "muse-spark-1.3": [
+      find,
+      toolStream([
+        ["set_price", { product_id: 1, amount_naira: 500, unit: "each", quote: "Tomato na 500" }],
+        ["remove_product", { product_id: 2, quote: "I no dey sell soap again" }],
+      ]),
+      textStream("DONE"),
+    ],
+    "sam-3.1": masks,
+    "muse-image-1.0": JSON.stringify({ data: [{ b64_json: tidied.toString("base64") }] }),
+  });
+  const bot = make();
+  (bot as any).options.restyle = true;
+  await bot.receive(msg({ kind: "image", mediaId: "photo1" }));
+  await bot.receive(msg({ kind: "text", text: said }));
+  await bot.receive(msg({ kind: "text", text: "YES" }));
+  expect(sender.sent.at(-2)!.body).toBe(COPY.publishing);
+  // One Muse Image call: the Tomato. The removed soap is never sent.
+  expect(calls.filter((c) => c.model === "muse-image-1.0").length).toBe(1);
+  const slug = last(sender).match(/\/c\/([a-z0-9]{12})/)![1]!;
+  expect(store.get(slug)!.items.map((i) => i.name)).toEqual(["Tomato"]);
+  // The tidied picture was a blank card, so the guard refused it and the real cut-out was published.
+  const session = join(dataDir, "sessions", createHash("sha256").update(TRADER).digest("hex").slice(0, 32));
+  expect(store.image(slug, "01.jpg")!.equals(readFileSync(join(session, "card-1.jpg")))).toBe(true);
+});
+
+test("STALLSNAP_RESTYLE is on by default and must be 0 or 1", () => {
+  expect(restyleSetting(undefined)).toBe(true);
+  expect(restyleSetting("0")).toBe(false);
+  expect(() => restyleSetting("yes")).toThrow("STALLSNAP_RESTYLE must be 0 or 1");
 });

@@ -105,4 +105,54 @@ describe("Muse Image tidies a real cut-out", () => {
     expect(like.colourChange).toBeLessThan(5);
     expect(like.newShapes).toBe(0);
   });
+
+  // QA round 1 on #20: a different product with the same outline must also be refused.
+  // A synthetic sachet: two-tone packet with a label band and a logo, like the live test cards.
+  const sachet = (top = "#e05a1a", label = "#f4d020", logo = "#1a8a2a") => `
+    <rect x="250" y="180" width="100" height="240" fill="${top}"/>
+    <rect x="250" y="260" width="100" height="50" fill="${label}"/>
+    <circle cx="275" cy="350" r="18" fill="${logo}"/>
+    <rect x="300" y="380" width="40" height="30" fill="#3a1a10"/>`;
+  const draw = (body: string) =>
+    sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="100%" height="100%" fill="#fff"/>${body}</svg>`)).jpeg().toBuffer();
+  const refused = async (original: Buffer, returned: Buffer) => {
+    const { client } = testClient({ [IMAGE_MODEL]: await answer(returned) });
+    const result = await restyleCard(client, original, "seasoning sachet");
+    expect(result).toMatchObject({ restyled: false, card: original });
+  };
+
+  test("QA D1: red fabric coming back orange is refused", async () => {
+    await refused(await draw(`<rect x="150" y="100" width="300" height="400" fill="#c81414"/>`), await draw(`<rect x="150" y="100" width="300" height="400" fill="#e0641e"/>`));
+  });
+
+  test("QA D2: one item coming back as four in a grid with the same outline is refused", async () => {
+    const four = [[200, 200], [304, 200], [200, 304], [304, 304]].map(([x, y]) => `<rect x="${x}" y="${y}" width="96" height="96" fill="#c81414"/>`).join("");
+    await refused(await draw(`<rect x="200" y="200" width="200" height="200" fill="#c81414"/>`), await draw(four));
+  });
+
+  test("QA D3 and D4: another flavour's packet, or another product of the same size, is refused", async () => {
+    const original = await draw(sachet());
+    await refused(original, await sharp(original).modulate({ hue: 60 }).jpeg().toBuffer());
+    await refused(original, await draw(sachet("#c01830", "#ffffff", "#2040c0")));
+  });
+
+  test("QA D5: a pile of another grain is refused", async () => {
+    const pile = (fill: string) => `<ellipse cx="300" cy="300" rx="150" ry="120" fill="${fill}"/>`;
+    await refused(await draw(pile("#b8862a")), await draw(pile("#5a4a3a")));
+  });
+
+  test("QA D6: a packet mirrored left to right is refused", async () => {
+    const original = await draw(sachet());
+    await refused(original, await sharp(original).flop().jpeg().toBuffer());
+  });
+
+  test("QA D7: a small extra item beside the product is refused", async () => {
+    await refused(await draw(sachet()), await draw(sachet() + `<rect x="355" y="300" width="30" height="60" fill="#2050c0"/>`));
+  });
+
+  test("QA control: a slightly brighter copy of the packet is kept", async () => {
+    const original = await draw(sachet());
+    const { client } = testClient({ [IMAGE_MODEL]: await answer(await sharp(original).modulate({ brightness: 1.06 }).jpeg().toBuffer()) });
+    expect((await restyleCard(client, original, "seasoning sachet")).restyled).toBe(true);
+  });
 });

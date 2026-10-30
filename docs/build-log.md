@@ -46,6 +46,7 @@ Dated record of what was built and when, for the hackathon rule that only work f
   - Our code compares the result with the cut-out on a 48 x 48 grid. If the product's colours moved too far, or something appeared on the old white background, the plain cut-out is published instead. Any failure, including the spend cap, also keeps the plain cut-out.
   - `bun run restyle <cut-out dir> [n]` shows the cut-out and Muse Image's picture side by side.
 - Stage 5 live check (Shola's Mac, 7 cut-outs from two third-party test photos, $0.07): the first guard kept all 7, but looking at them showed one stack of two sachets had come back as two stacks of two, and another had its hidden half redrawn. Muse Image had also zoomed in on every product, which hid the change from a grid check, and left a faint grey pattern on the background. Fix: the guard now finds the product's outline in both pictures, refuses the picture if the outline's shape changed, and otherwise puts Muse Image's product back at the cut-out's size and place on pure white before comparing. Re-checked on the same 7 answers with no new calls: 5 kept, the 2 changed sachets refused.
+- QA round 1 on stage 5: a different product with the same outline (another colour or flavour, one item as four, a mirrored packet) still passed the colour limit of 45. The limit is now 15; the 7 attacks are refused and the 5 live clean-ups (change 3 to 8) are still kept.
 
 ### Decisions
 

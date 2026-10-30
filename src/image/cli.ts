@@ -21,7 +21,14 @@ const outDir = outArg ?? join("out", basename(photoPath, extname(photoPath)));
 const budget = new Budget(budgetFromEnv());
 const client = new MetaClient({ budget, apiKey: process.env.MODEL_API_KEY });
 
-const result = await photoToCutouts(client, readFileSync(photoPath));
+let result;
+try {
+  result = await photoToCutouts(client, readFileSync(photoPath));
+} catch (error) {
+  // Expected stops (spend guard, bad photo, API error) print one line, not a stack trace.
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 mkdirSync(outDir, { recursive: true });
 for (const cut of result.cutouts) {
   const name = `${String(cut.productId).padStart(2, "0")}-${slug(cut.name)}`;

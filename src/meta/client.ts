@@ -113,6 +113,31 @@ export class MetaClient {
     return events;
   }
 
+  // One-off image edit with Muse Image (https://dev.meta.ai/docs/image-generation#edit), JSON body.
+  // Billed per image returned; cached by the request, which holds the input picture.
+  async editImage(body: Record<string, unknown>): Promise<ImageResult> {
+    const model = String(body.model);
+    const path = this.cachePath(body);
+    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as ImageResult;
+
+    if (this.options.budget.settings.live && !this.options.apiKey) {
+      throw new MetaApiError("MODEL_API_KEY is not set, so the live call cannot be made.");
+    }
+    this.options.budget.allow(model);
+    const response = await this.fetchImpl(`${BASE_URL}/images/edits`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.options.apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new MetaApiError(`Meta API ${response.status} for ${model}: ${text.slice(0, 300)}`, response.status);
+    const result = JSON.parse(text) as ImageResult;
+    this.options.budget.record(model, costUsd(model, undefined, result.data?.length ?? 0));
+    mkdirSync(this.cacheDir, { recursive: true });
+    writeFileSync(path, JSON.stringify(result));
+    return result;
+  }
+
   // Transcribes a WAV recording with Muse Voice Transcribe (https://dev.meta.ai/docs/speech-to-text).
   // Cached by the audio and settings, like every other call.
   async transcribe(wav: Buffer, settings: Record<string, unknown>): Promise<TranscribeResult> {
@@ -143,6 +168,11 @@ export class MetaClient {
     writeFileSync(path, JSON.stringify(result));
     return result;
   }
+}
+
+export interface ImageResult {
+  data: { b64_json?: string }[];
+  output_format?: string;
 }
 
 export interface TranscribeResult {

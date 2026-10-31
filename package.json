@@ -8,7 +8,8 @@
     "check": "tsc --noEmit && bun test",
     "cutouts": "bun src/image/cli.ts",
     "price": "bun src/pricing/cli.ts",
-    "spend": "bun src/meta/spend.ts"
+    "spend": "bun src/meta/spend.ts",
+    "restyle": "bun src/image/restyle-cli.ts"
   },
   "dependencies": {
     "@meta-sam/parser": "^0.1.0",
